@@ -3,9 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Карта монтажа — тест без ключей (OSM)</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <title>Карта монтажа — подсветка домов (2ГИС)</title>
   <style>
     html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; }
     #app { display: grid; grid-template-columns: 360px 1fr; height: 100%; }
@@ -13,31 +11,48 @@
     #map { width: 100%; height: 100%; }
     .panel { background: #fafafa; border: 1px solid #eaeaea; border-radius: 12px; padding: 12px; margin-bottom: 12px; }
     .row { display: flex; gap: 8px; align-items: center; }
-    textarea { width: 100%; min-height: 120px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas; font-size: 13px; }
+    .row input, .row button, textarea { font-size: 14px; }
+    textarea { width: 100%; min-height: 120px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas; }
     .legend { display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; font-size: 13px; }
     .swatch { width: 18px; height: 18px; border-radius: 4px; border: 1px solid rgba(0,0,0,.15); }
     .item { padding: 8px 10px; border-radius: 10px; border: 1px dashed #ddd; margin-bottom: 6px; cursor: pointer; }
     .muted { color: #666; font-size: 13px; }
-    .pill { padding: 2px 6px; border-radius: 999px; font-size: 12px; background: #f1f5f9; border: 1px solid #e5e7eb; }
+    .link { color: #0b7de3; text-decoration: none; }
+    .status { padding: 2px 6px; border-radius: 999px; font-size: 12px; border: 1px solid rgba(0,0,0,.12); }
+    .pill { padding: 2px 6px; border-radius: 999px; font-size: 12px; background: #f1f5f9; }
+    .small { font-size: 12px; }
   </style>
+  <!-- 2GIS MapGL -->
+  <script src="https://mapgl.2gis.com/api/js/v1"></script>
 </head>
 <body>
 <div id="app">
   <div id="sidebar">
     <div class="panel">
-      <div style="font-weight:700;">Карта монтажа — OSM тест (без ключей)</div>
-      <div class="muted">Пока ждём доступ к 2ГИС, можно тестировать here. Источник: OpenStreetMap/Nominatim.</div>
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+        <div>
+          <div style="font-weight:700;">Карта монтажа — подсветка домов</div>
+          <div class="muted">Вставь адреса → «Построить». Понимает и твой 6-колоночный формат.</div>
+        </div>
+        <a class="link small" href="#" id="btnFit">Показать все</a>
+      </div>
     </div>
 
     <div class="panel">
-      <div style="font-weight:600; margin-bottom:6px;">Адреса</div>
-      <textarea id="addrInput" placeholder="Поддерживаются форматы:\n1) Адрес\tСтатус\t#Цвет\n2) ID ID2 Город Улица Дом Подъезд (через табы/пробелы). Статус задаётся как 'Подъезд N'."></textarea>
+      <div style="font-weight:600; margin-bottom:6px;">1) Ключ API 2ГИС</div>
+      <input id="apiKey" type="password" placeholder="Вставьте ключ 2ГИС" style="width:100%; padding:8px; border-radius:8px; border:1px solid #ddd;" />
+      <div class="muted small" style="margin-top:6px;">Нужны права: <b>MapGL</b> и <b>Catalog API</b>. Если ниже оставишь поле пустым — возьмётся KEY из кода.</div>
+    </div>
+
+    <div class="panel">
+      <div style="font-weight:600; margin-bottom:6px;">2) Адреса для монтажа</div>
+      <textarea id="addrInput" placeholder="Форматы ввода:
+• Адрес[TAB]Статус[TAB]#Цвет
+• ID  ID2  Город  Улица  Дом  Подъезд  (через табы/пробелы). Статус автогенерируется как 'Подъезд N'."></textarea>
       <div class="row" style="margin-top:8px;">
         <button id="btnBuild">Построить</button>
         <button id="btnClear">Очистить</button>
-        <button id="btnFit">Показать все</button>
       </div>
-      <div class="muted" style="margin-top:6px;">Важно: Nominatim ограничивает частоту запросов. Используйте для небольших списков (тест).</div>
     </div>
 
     <div class="panel">
@@ -50,145 +65,251 @@
       <div id="list"></div>
     </div>
   </div>
-
   <div id="map"></div>
 </div>
 
 <script>
 (function(){
-  const $ = (s)=>document.querySelector(s);
-  const state = { map:null, layers:[], statusColor:new Map(), bounds:null };
+  // ВСТАВЬ СВОЙ ДЕМО-КЛЮЧ 2ГИС (или оставь пустым и вводи в поле слева)
+  const KEY = 'b071d8db-8fa6-4a9f-927e-85145f520db9';
 
-  function ensureMap(){
-    if(state.map) return;
-    state.map = L.map('map').setView([51.533, 46.033], 12); // Саратов
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: '&copy; OpenStreetMap'
-    }).addTo(state.map);
+  // ----------------------------
+  // UI helpers
+  // ----------------------------
+  const $ = (sel) => document.querySelector(sel);
+
+  const state = {
+    map: null,
+    overlays: [],
+    statusColor: new Map(), // status -> color
+    bounds: { minLon: +Infinity, minLat: +Infinity, maxLon: -Infinity, maxLat: -Infinity },
+  };
+
+  function updateBounds([lon,lat]){
+    const b = state.bounds;
+    b.minLon = Math.min(b.minLon, lon);
+    b.minLat = Math.min(b.minLat, lat);
+    b.maxLon = Math.max(b.maxLon, lon);
+    b.maxLat = Math.max(b.maxLat, lat);
   }
 
-  function clearMap(){
-    state.layers.forEach(l=>{ try{ state.map.removeLayer(l);}catch(e){} });
-    state.layers = [];
-    state.bounds = null;
+  function fitToAll(){
+    const { minLon, minLat, maxLon, maxLat } = state.bounds;
+    if (!isFinite(minLon) || !isFinite(minLat) || !isFinite(maxLon) || !isFinite(maxLat)) return;
+    const center = [ (minLon + maxLon)/2, (minLat + maxLat)/2 ];
+    state.map.setCenter(center);
+    const dx = Math.abs(maxLon - minLon);
+    const dy = Math.abs(maxLat - minLat);
+    const span = Math.max(dx, dy);
+    let zoom = 14;
+    if (span > 0.5) zoom = 10; else if (span > 0.2) zoom = 11; else if (span > 0.1) zoom = 12; else if (span > 0.05) zoom = 13; else if (span > 0.02) zoom = 14; else if (span > 0.01) zoom = 15; else zoom = 16;
+    state.map.setZoom(zoom);
+  }
+
+  // ----------------------------
+  // Map init
+  // ----------------------------
+  function ensureMap(){
+    if (state.map) return;
+    // начальный центр — Саратов
+    state.map = new mapgl.Map('map', {
+      center: [46.033, 51.533],
+      zoom: 12,
+      key: KEY || 'TEMP-KEY', // если поле пустое — используем зашитый KEY
+    });
+  }
+
+  function clearOverlays(){
+    state.overlays.forEach(o=>{ try { o.destroy && o.destroy(); } catch(e){} });
+    state.overlays = [];
+    state.bounds = { minLon: +Infinity, minLat: +Infinity, maxLon: -Infinity, maxLat: -Infinity };
     $('#list').innerHTML = '';
   }
 
-  function extendBounds(layer){
-    const b = layer.getBounds ? layer.getBounds() : (layer.getLatLng ? L.latLngBounds([layer.getLatLng()]) : null);
-    if(!b) return;
-    if(!state.bounds) state.bounds = b; else state.bounds.extend(b);
+  function addLegendEntry(status, color){
+    const row = document.createElement('div');
+    row.style.display = 'contents'; // grid cells
+    const title = document.createElement('div');
+    title.textContent = status || '(без статуса)';
+    const sw = document.createElement('div');
+    sw.className = 'swatch';
+    sw.style.background = color || '#7c3aed';
+    $('#legend').appendChild(title);
+    $('#legend').appendChild(sw);
   }
 
-  function fitAll(){ if(state.bounds) state.map.fitBounds(state.bounds.pad(0.2)); }
-
-  function ensureColor(status, color){
-    if(color) return color;
-    if(!status) return '#7c3aed';
-    if(state.statusColor.has(status)) return state.statusColor.get(status);
-    const h = Math.abs(hash(status)) % 360; const c = `hsl(${h} 85% 62%)`;
-    state.statusColor.set(status, c); return c;
+  function rebuildLegend(){
+    const host = $('#legend');
+    host.innerHTML = '';
+    const entries = Array.from(state.statusColor.entries());
+    if (!entries.length){ addLegendEntry('Адреса', '#7c3aed'); return; }
+    entries.forEach(([s,c])=> addLegendEntry(s, c));
   }
-  function hash(str){ let h=0; for(let i=0;i<str.length;i++){ h=((h<<5)-h)+str.charCodeAt(i); h|=0;} return h; }
+
+  // ----------------------------
+  // Drawing helpers (Polygon/Marker)
+  // ----------------------------
+  function drawPolygon(coords, opts){
+    const polygon = new mapgl.Polygon(state.map, {
+      coordinates: [coords], // внешний контур
+      strokeWidth: 2,
+      strokeColor: opts.strokeColor || '#000000',
+      color: opts.fill || '#00000033',
+    });
+    state.overlays.push(polygon);
+    return polygon;
+  }
+
+  function drawMarker(point, html){
+    const m = new mapgl.HtmlMarker(state.map, {
+      coordinates: point,
+      html: html || '<div style="width:10px;height:10px;border-radius:50%;background:#111"></div>'
+    });
+    state.overlays.push(m);
+    return m;
+  }
 
   function addListItem(item){
     const el = document.createElement('div');
     el.className = 'item';
-    el.innerHTML = `<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;">
-      <div style="font-weight:600">${escapeHtml(item.address)}</div>
-      ${item.status?`<span class='pill'>${escapeHtml(item.status)}</span>`:''}
-    </div>
-    <div class='muted'>${item.lat && item.lon ? `${item.lat.toFixed(6)}, ${item.lon.toFixed(6)}` : '—'}</div>`;
-    el.addEventListener('click', ()=>{ if(item.lat&&item.lon){ state.map.setView([item.lat,item.lon], 17); }});
+    el.innerHTML = `
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;">
+        <div style="font-weight:600">${escapeHtml(item.address)}</div>
+        ${item.status ? `<span class="pill" style="border:1px solid ${item.color||'#ddd'}">${escapeHtml(item.status)}</span>` : ''}
+      </div>
+      <div class="muted small">${item.lat && item.lon ? `${item.lat.toFixed(6)}, ${item.lon.toFixed(6)}` : '—'}</div>
+    `;
+    el.addEventListener('click', ()=>{
+      if (item.lon && item.lat){ state.map.setCenter([item.lon, item.lat]); state.map.setZoom(17); }
+    });
     $('#list').appendChild(el);
   }
 
-  function rebuildLegend(){
-    const host=$('#legend'); host.innerHTML='';
-    const entries = Array.from(state.statusColor.entries());
-    if(!entries.length){ addLegend('Адреса', '#7c3aed'); return; }
-    entries.forEach(([s,c])=>addLegend(s,c));
-  }
-  function addLegend(s,c){
-    const t=document.createElement('div'); t.textContent=s; const sw=document.createElement('div'); sw.className='swatch'; sw.style.background=c; const host=$('#legend'); host.appendChild(t); host.appendChild(sw);
+  function escapeHtml(s){
+    return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
   }
 
-  function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
+  // ----------------------------
+  // Geocoding via 2GIS Catalog API
+  // ----------------------------
+  async function geocodeAddress(key, q){
+    const url = new URL('https://catalog.api.2gis.com/3.0/items/geocode');
+    url.searchParams.set('q', q);
+    url.searchParams.set('fields', 'items.point,items.geometry');
+    url.searchParams.set('key', key);
+    const r = await fetch(url.toString());
+    if (!r.ok) throw new Error('Catalog API error: ' + r.status);
+    const j = await r.json();
+    const item = j?.result?.items?.[0];
+    if (!item) return null;
+    const point = item.point ? [item.point.lon, item.point.lat] : null;
+    // Попробуем вытащить контур здания (формат у 2ГИС может отличаться)
+    let polygonCoords = null;
+    const g = item.geometry;
+    if (g && g.selection && Array.isArray(g.selection.contours)){
+      const c = g.selection.contours[0].points;
+      if (Array.isArray(c) && c.length){
+        polygonCoords = c.map(p => [p[0] ?? p.lon ?? p.x, p[1] ?? p.lat ?? p.y]);
+      }
+    } else if (g && g.coordinates) {
+      const arr = g.coordinates?.[0];
+      if (Array.isArray(arr) && arr.length){
+        polygonCoords = arr.map(pt => [pt[0], pt[1]]);
+      }
+    }
+    return { point, polygonCoords };
+  }
 
-  // --- Вспомогательные парсеры ввода ---
-  function parseInput(text){
-    const lines = text.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+  // ----------------------------
+  // Parse input (адреса/таблица)
+  // ----------------------------
+  function parseAddresses(text){
+    const lines = text.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
     const out = [];
-    const sixCols = /^(\S+)\s+(\S+)\s+(\S+)\s+(.+?)\s+(\S+)\s+(\S+)$/u; // ID ID2 City Street House Entrance
-    for(const line of lines){
-      const m = sixCols.exec(line);
-      if(m){
-        const city=m[3], street=m[4], house=m[5], entr=m[6];
-        out.push({ address:`${city}, ${street} ${house}`, status:`Подъезд ${entr}`, color:'' });
+    for (const line of lines){
+      // 6-колоночный формат: ID ID2 City Street House Entrance
+      const m6 = /^(\S+)\s+(\S+)\s+(\S+)\s+(.+?)\s+(\S+)\s+(\S+)$/.exec(line);
+      if (m6) {
+        const city = m6[3], street = m6[4], house = m6[5], entr = m6[6];
+        out.push({ address: `${city}, ${street} ${house}`, status: `Подъезд ${entr}`, color: '' });
         continue;
       }
-      const tab = line.split(/\t/);
-      if(tab.length>=1){
-        out.push({ address:tab[0]?.trim(), status:tab[1]?.trim()||'', color:(tab[2]?.trim()||'').toLowerCase() });
+      // Формат с табами: Адрес \t Статус \t Цвет
+      const parts = line.split(/\t/);
+      if (parts.length >= 1) {
+        const address = parts[0]?.trim();
+        const status  = parts[1]?.trim() || '';
+        const color   = (parts[2]?.trim() || '').toLowerCase();
+        out.push({ address, status, color });
+        continue;
       }
     }
     return out;
   }
 
-  // --- Геокодер на Nominatim (OSM). Возвращает polygon, если есть ---
-  async function geocodeOSM(q){
-    const url = new URL('https://nominatim.openstreetmap.org/search');
-    url.searchParams.set('q', q);
-    url.searchParams.set('format', 'json');
-    url.searchParams.set('polygon_geojson', '1');
-    url.searchParams.set('addressdetails', '1');
-    url.searchParams.set('limit', '1');
-    url.searchParams.set('accept-language', 'ru');
-    const r = await fetch(url.toString(), { headers: { 'Accept': 'application/json' }});
-    if(!r.ok) throw new Error('Nominatim error '+r.status);
-    const arr = await r.json();
-    const it = arr[0];
-    if(!it) return null;
-    const point = [parseFloat(it.lon), parseFloat(it.lat)];
-    const gj = it.geojson;
-    return { point, gj };
+  function ensureColorForStatus(item){
+    if (item.color) return item.color;
+    if (!item.status) return '#7c3aed';
+    if (state.statusColor.has(item.status)) return state.statusColor.get(item.status);
+    const h = Math.abs(hash(item.status)) % 360;
+    const c = `hsl(${h} 90% 70%)`;
+    state.statusColor.set(item.status, c);
+    return c;
   }
+  function hash(str){ let h=0; for (let i=0;i<str.length;i++){ h=((h<<5)-h)+str.charCodeAt(i); h|=0; } return h; }
 
+  // ----------------------------
+  // Main build
+  // ----------------------------
   async function build(){
-    ensureMap();
-    clearMap();
-    const items = parseInput($('#addrInput').value);
-    for(const item of items){
-      const color = ensureColor(item.status, item.color);
-      try{
-        const res = await geocodeOSM(item.address);
-        if(!res){ addListItem(item); continue; }
-        const [lon,lat] = res.point; item.lon=lon; item.lat=lat; addListItem(item);
-        if(res.gj && (res.gj.type==='Polygon' || res.gj.type==='MultiPolygon')){
-          const lyr = L.geoJSON(res.gj, { style:{ color: color, weight:2, fillColor: color, fillOpacity:0.35 }}).addTo(state.map);
-          state.layers.push(lyr);
-          extendBounds(lyr);
-        } else {
-          const m = L.circleMarker([lat,lon], { radius:6, weight:2, color:'#fff', fillColor: color, fillOpacity:1, pane:'markerPane' }).addTo(state.map);
-          state.layers.push(m);
-          extendBounds(m);
+    const key = ($('#apiKey').value.trim() || KEY);
+    if (!key){ alert('Вставьте ключ API 2ГИС'); return; }
+
+    clearOverlays();
+
+    const items = parseAddresses($('#addrInput').value);
+    for (const item of items){
+      const color = ensureColorForStatus(item);
+      try {
+        const res = await geocodeAddress(key, item.address);
+        if (!res){ addListItem(item); continue; }
+        if (res.polygonCoords){
+          // Контур здания
+          drawPolygon(res.polygonCoords, { fill: color + '55', strokeColor: color });
+          const centroid = res.polygonCoords.reduce((acc, p)=>[acc[0]+p[0], acc[1]+p[1]],[0,0]).map(v=>v/res.polygonCoords.length);
+          item.lon = centroid[0]; item.lat = centroid[1];
+          updateBounds(centroid);
+          drawMarker(centroid, `<div style="width:12px;height:12px;border-radius:999px;border:2px solid #fff;background:${color};box-shadow:0 0 0 2px ${color}55"></div>`);
+        } else if (res.point){
+          // Нет контура — ставим маркер
+          item.lon = res.point[0]; item.lat = res.point[1];
+          updateBounds(res.point);
+          drawMarker(res.point, `<div style="width:14px;height:14px;border-radius:999px;border:2px solid #fff;background:${color};box-shadow:0 0 0 2px ${color}55"></div>`);
         }
-        await delay(150);
-      }catch(e){ console.warn('Ошибка геокодинга', item.address, e); addListItem(item); }
+        addListItem(item);
+        await new Promise(r=>setTimeout(r, 120)); // не упираться в лимиты
+      } catch (e){
+        console.warn('Ошибка геокодинга', item.address, e);
+        addListItem(item);
+      }
     }
-    rebuildLegend(); fitAll();
+    rebuildLegend();
+    fitToAll();
   }
 
-  const delay = (ms)=>new Promise(r=>setTimeout(r,ms));
-
-  // UI
+  // ----------------------------
+  // Wire UI
+  // ----------------------------
   ensureMap();
+  if (KEY) { document.getElementById('apiKey').value = KEY; }
   document.getElementById('btnBuild').addEventListener('click', build);
-  document.getElementById('btnClear').addEventListener('click', ()=>{ $('#addrInput').value=''; clearMap(); rebuildLegend(); });
-  document.getElementById('btnFit').addEventListener('click', fitAll);
+  document.getElementById('btnClear').addEventListener('click', ()=>{
+    document.getElementById('addrInput').value='';
+    clearOverlays(); rebuildLegend();
+  });
+  document.getElementById('btnFit').addEventListener('click', fitToAll);
 
-  // демо
+  // демо (твой формат, табы)
   document.getElementById('addrInput').value = [
     '12\t970\tСаратов\t1-я Беговая\t13\t4',
     '20\t772\tСаратов\t1-й Кавказский\t10\t4'
