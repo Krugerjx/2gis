@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Карта монтажа — подсветка домов (2ГИС)</title>
+  <style>
+    html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
+    #app { display: grid; grid-template-columns: 360px 1fr; height: 100%; }
+    #sidebar { padding: 14px; border-right: 1px solid #eee; overflow: auto; }
+    #map { width: 100%; height: 100%; }
+    .panel { background: #fafafa; border: 1px solid #eaeaea; border-radius: 12px; padding: 12px; margin-bottom: 12px; }
+    .row { display: flex; gap: 8px; align-items: center; }
+    .row input, .row select, .row button, textarea { font-size: 14px; }
+    textarea { width: 100%; min-height: 120px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas; }
+    .legend { display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; font-size: 13px; }
+    .swatch { width: 18px; height: 18px; border-radius: 4px; border: 1px solid rgba(0,0,0,.15); }
+    .item { padding: 8px 10px; border-radius: 10px; border: 1px dashed #ddd; margin-bottom: 6px; }
+    .muted { color: #666; font-size: 13px; }
+    .link { color: #0b7de3; text-decoration: none; }
+    .status { padding: 2px 6px; border-radius: 999px; font-size: 12px; border: 1px solid rgba(0,0,0,.12); }
+    .pill { padding: 2px 6px; border-radius: 999px; font-size: 12px; background: #f1f5f9; }
+    .small { font-size: 12px; }
+  </style>
+  <!-- 2GIS MapGL -->
+  <script src="https://mapgl.2gis.com/api/js/v1"></script>
+</head>
+<body>
+<div id="app">
+  <div id="sidebar">
+    <div class="panel">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+        <div>
+          <div style="font-weight:700;">Карта монтажа — подсветка домов</div>
+          <div class="muted">Вставьте адреса, нажмите «Построить»</div>
+        </div>
+        <a class="link small" href="#" id="btnFit">Показать все</a>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div style="font-weight:600; margin-bottom:6px;">1) Ключ API 2ГИС</div>
+      <input id="apiKey" type="password" placeholder="Вставьте ключ 2ГИС" style="width:100%; padding:8px; border-radius:8px; border:1px solid #ddd;" />
+      <div class="muted small" style="margin-top:6px;">Нужен ключ с доступом к <b>MapGL</b> и <b>Catalog API</b>.</div>
+    </div>
+
+    <div class="panel">
+      <div style="font-weight:600; margin-bottom:6px;">2) Адреса для монтажа</div>
+      <textarea id="addrInput" placeholder="Формат: один адрес в строке; можно через таб\nул. Московская 10, Саратов\tСегодня\t#ff6b6b\nг. Энгельс, ул. Ленина 5\tЗавтра\t#ffd166\nСаратов, Чапаева 27\tГотово\t#06d6a0"></textarea>
+      <div class="row" style="margin-top:8px;">
+        <button id="btnBuild">Построить</button>
+        <button id="btnClear">Очистить</button>
+      </div>
+      <div class="muted small" style="margin-top:6px;">Колонки (необязательно): <code>Адрес</code> | <code>Статус</code> | <code>Цвет</code>. Разделитель — таб (<code>\t</code>) или просто адрес одной колонкой.</div>
+    </div>
+
+    <div class="panel">
+      <div style="font-weight:600; margin-bottom:6px;">Легенда статусов</div>
+      <div id="legend" class="legend"></div>
+    </div>
+
+    <div class="panel">
+      <div style="font-weight:600; margin-bottom:6px;">Найденные точки</div>
+      <div id="list"></div>
+    </div>
+  </div>
+  <div id="map"></div>
+</div>
+
+<script>
+(function(){
+  // ----------------------------
+  // UI helpers
+  // ----------------------------
+  const $ = (sel) => document.querySelector(sel);
+  const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+
+  const state = {
+    map: null,
+    key: '',
+    overlays: [],
+    items: [],
+    statusColor: new Map(), // status -> color
+    bounds: { minLon: +Infinity, minLat: +Infinity, maxLon: -Infinity, maxLat: -Infinity },
+  };
+
+  function updateBounds([lon,lat]){
+    const b = state.bounds;
+    b.minLon = Math.min(b.minLon, lon);
+    b.minLat = Math.min(b.minLat, lat);
+    b.maxLon = Math.max(b.maxLon, lon);
+    b.maxLat = Math.max(b.maxLat, lat);
+  }
+
+  function fitToAll(){
+    const { minLon, minLat, maxLon, maxLat } = state.bounds;
+    if (!isFinite(minLon) || !isFinite(minLat) || !isFinite(maxLon) || !isFinite(maxLat)) return;
+    // MapGL fitBounds отсутствует — сделаем вручную: центр + подходящий zoom
+    const center = [ (minLon + maxLon)/2, (minLat + maxLat)/2 ];
+    state.map.setCenter(center);
+    // грубая оценка уровня зума
+    const dx = Math.abs(maxLon - minLon);
+    const dy = Math.abs(maxLat - minLat);
+    const span = Math.max(dx, dy);
+    let zoom = 14;
+    if (span > 0.5) zoom = 10; else if (span > 0.2) zoom = 11; else if (span > 0.1) zoom = 12; else if (span > 0.05) zoom = 13; else if (span > 0.02) zoom = 14; else if (span > 0.01) zoom = 15; else zoom = 16;
+    state.map.setZoom(zoom);
+  }
+
+  // ----------------------------
+  // Map init
+  // ----------------------------
+  function ensureMap(){
+    if (state.map) return;
+    // начальный центр — Саратов
+    state.map = new mapgl.Map('map', {
+      center: [46.033, 51.533],
+      zoom: 12,
+      key: 'TEMP-KEY', // заменим после ввода реального ключа
+    });
+  }
+
+  function setMapKey(key){
+    if (!state.map) return;
+    try { state.map.setKey(key); } catch(e) {}
+  }
+
+  function clearOverlays(){
+    state.overlays.forEach(o=>{ try { o.destroy && o.destroy(); } catch(e){} });
+    state.overlays = [];
+    state.items = [];
+    state.bounds = { minLon: +Infinity, minLat: +Infinity, maxLon: -Infinity, maxLat: -Infinity };
+    $('#list').innerHTML = '';
+  }
+
+  function addLegendEntry(status, color){
+    const row = document.createElement('div');
+    row.style.display = 'contents'; // grid cells
+    const title = document.createElement('div');
+    title.textContent = status || '(без статуса)';
+    const sw = document.createElement('div');
+    sw.className = 'swatch';
+    sw.style.background = color || '#7c3aed';
+    $('#legend').appendChild(title);
+    $('#legend').appendChild(sw);
+  }
+
+  function rebuildLegend(){
+    const host = $('#legend');
+    host.innerHTML = '';
+    const entries = Array.from(state.statusColor.entries());
+    if (!entries.length){ addLegendEntry('Адреса', '#7c3aed'); return; }
+    entries.forEach(([s,c])=> addLegendEntry(s, c));
+  }
+
+  // ----------------------------
+  // Drawing helpers (Polygon/Marker)
+  // ----------------------------
+  function drawPolygon(coords, opts){
+    const polygon = new mapgl.Polygon(state.map, {
+      coordinates: [coords], // внешний контур
+      strokeWidth: 2,
+      strokeColor: opts.strokeColor || '#000000',
+      color: opts.fill || '#00000033',
+    });
+    state.overlays.push(polygon);
+    return polygon;
+  }
+
+  function drawMarker(point, html){
+    const m = new mapgl.HtmlMarker(state.map, {
+      coordinates: point,
+      html: html || '<div style="width:10px;height:10px;border-radius:50%;background:#111"></div>'
+    });
+    state.overlays.push(m);
+    return m;
+  }
+
+  function popupHtml(item){
+    const { address, status, color } = item;
+    return `
+      <div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:10px;min-width:220px;box-shadow:0 10px 30px rgba(0,0,0,.08)">
+        <div style="font-weight:700;margin-bottom:2px">${escapeHtml(address)}</div>
+        <div class="muted small" style="margin-bottom:8px">${item.lat && item.lon ? `${item.lat.toFixed(6)}, ${item.lon.toFixed(6)}` : 'координаты не определены'}</div>
+        ${status ? `<span class="status" style="border-color:${color||'#ddd'}">${escapeHtml(status)}</span>` : ''}
+      </div>`;
+  }
+
+  function addListItem(item){
+    const el = document.createElement('div');
+    el.className = 'item';
+    el.innerHTML = `
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;">
+        <div style="font-weight:600">${escapeHtml(item.address)}</div>
+        ${item.status ? `<span class="pill" style="border:1px solid ${item.color||'#ddd'}">${escapeHtml(item.status)}</span>` : ''}
+      </div>
+      <div class="muted small">${item.lat && item.lon ? `${item.lat.toFixed(6)}, ${item.lon.toFixed(6)}` : '—'}</div>
+    `;
+    el.addEventListener('click', ()=>{
+      if (item.lon && item.lat){ state.map.setCenter([item.lon, item.lat]); state.map.setZoom(17); }
+    });
+    $('#list').appendChild(el);
+  }
+
+  function escapeHtml(s){
+    return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
+  }
+
+  // ----------------------------
+  // Geocoding via 2GIS Catalog API
+  // ----------------------------
+  async function geocodeAddress(key, q){
+    const url = new URL('https://catalog.api.2gis.com/3.0/items/geocode');
+    url.searchParams.set('q', q);
+    url.searchParams.set('fields', 'items.point,items.geometry');
+    url.searchParams.set('key', key);
+    const r = await fetch(url.toString());
+    if (!r.ok) throw new Error('Catalog API error: ' + r.status);
+    const j = await r.json();
+    const item = j?.result?.items?.[0];
+    if (!item) return null;
+    const point = item.point ? [item.point.lon, item.point.lat] : null;
+    // Попытаемся разобрать геометрию как Polygon (форматы у 2ГИС могут отличаться по слоям)
+    let polygonCoords = null;
+    const g = item.geometry;
+    if (g && g.selection && Array.isArray(g.selection.contours)){
+      // новый формат selection.contours[0].points -> [{x,y}] в WebMercator (скорее всего уже lon/lat)
+      const c = g.selection.contours[0].points;
+      if (Array.isArray(c) && c.length){
+        polygonCoords = c.map(p => [p[0] ?? p.lon ?? p.x, p[1] ?? p.lat ?? p.y]);
+      }
+    } else if (g && g.coordinates) {
+      // формат GeoJSON-подобный: coordinates[0] -> [[lon,lat]...]
+      const arr = g.coordinates?.[0];
+      if (Array.isArray(arr) && arr.length){
+        polygonCoords = arr.map(pt => [pt[0], pt[1]]);
+      }
+    }
+    return { point, polygonCoords };
+  }
+
+  // ----------------------------
+  // Parse input block (tab/line separated)
+  // ----------------------------
+  function parseAddresses(text){
+    const lines = text.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    const out = [];
+    for (const line of lines){
+      const parts = line.split(/\t|\s{2,}\|\s{2,}/); // табы (или редкий разделитель "  |  ")
+      const address = parts[0]?.trim();
+      const status = parts[1]?.trim() || '';
+      const color  = (parts[2]?.trim() || '').toLowerCase();
+      out.push({ address, status, color });
+    }
+    return out;
+  }
+
+  function ensureColorForStatus(item){
+    if (item.color) return item.color;
+    if (!item.status) return '#7c3aed';
+    if (state.statusColor.has(item.status)) return state.statusColor.get(item.status);
+    // автогенерация пастельного цвета по статусу
+    const h = Math.abs(hash(item.status)) % 360;
+    const c = `hsl(${h} 90% 70%)`;
+    state.statusColor.set(item.status, c);
+    return c;
+  }
+
+  function hash(str){ let h=0; for (let i=0;i<str.length;i++){ h=((h<<5)-h)+str.charCodeAt(i); h|=0; } return h; }
+
+  // ----------------------------
+  // Main build
+  // ----------------------------
+  async function build(){
+    const key = $('#apiKey').value.trim();
+    if (!key){ alert('Вставьте ключ API 2ГИС'); return; }
+    setMapKey(key);
+
+    clearOverlays();
+
+    const items = parseAddresses($('#addrInput').value);
+    // геокодим по очереди с маленькой задержкой, чтобы не упереться в лимиты
+    for (const item of items){
+      const color = ensureColorForStatus(item);
+      try {
+        const res = await geocodeAddress(key, item.address);
+        if (!res){ addListItem(item); continue; }
+        if (res.polygonCoords){
+          // Рисуем контур здания
+          drawPolygon(res.polygonCoords, { fill: color + '55', strokeColor: color });
+          // центр полигона для списка
+          const centroid = res.polygonCoords.reduce((acc, p)=>[acc[0]+p[0], acc[1]+p[1]],[0,0]).map(v=>v/res.polygonCoords.length);
+          item.lon = centroid[0]; item.lat = centroid[1];
+          updateBounds(centroid);
+          // отметка
+          drawMarker(centroid, `<div style="width:12px;height:12px;border-radius:999px;border:2px solid #fff;background:${color};box-shadow:0 0 0 2px ${color}55"></div>`);
+        } else if (res.point){
+          // Нет геометрии — ставим маркер по центру
+          item.lon = res.point[0]; item.lat = res.point[1];
+          updateBounds(res.point);
+          drawMarker(res.point, `<div style="width:14px;height:14px;border-radius:999px;border:2px solid #fff;background:${color};box-shadow:0 0 0 2px ${color}55"></div>`);
+        }
+        addListItem(item);
+        await new Promise(r=>setTimeout(r, 120));
+      } catch (e){
+        console.warn('Ошибка геокодинга', item.address, e);
+        addListItem(item);
+      }
+    }
+
+    rebuildLegend();
+    fitToAll();
+  }
+
+  // ----------------------------
+  // Wire UI
+  // ----------------------------
+  ensureMap();
+  $('#btnBuild').addEventListener('click', build);
+  $('#btnClear').addEventListener('click', ()=>{ $('#addrInput').value=''; clearOverlays(); rebuildLegend(); });
+  $('#btnFit').addEventListener('click', fitToAll);
+
+  // демо данные
+  $('#addrInput').value = [
+    'Саратов, ул. Московская 10\tСегодня\t#ff6b6b',
+    'Саратов, ул. Чапаева 27\tЗавтра\t#ffd166',
+    'Энгельс, ул. Ленина 5\tГотово\t#06d6a0',
+  ].join('\n');
+})();
+</script>
+</body>
+</html>
