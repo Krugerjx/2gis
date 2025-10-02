@@ -32,7 +32,7 @@
     <div class="panel">
       <div style="font-weight:600; margin-bottom:6px;">Ключ API 2ГИС</div>
       <input id="apiKey" type="password" placeholder="Вставьте ключ 2ГИС" style="width:100%; padding:8px; border-radius:8px; border:1px solid #ddd;" />
-      <div class="muted" style="margin-top:6px;">Нужны сервисы: <b>MapGL JS API</b> и <b>Catalog API</b>. Если поле пустое — возьмётся ключ из кода.</div>
+      <div class="muted" style="margin-top:6px;">Нужны сервисы: <b>MapGL JS API</b> и <b>Catalog API</b>. Можно оставить поле пустым — возьмётся ключ из кода.</div>
     </div>
 
     <div class="panel">
@@ -62,8 +62,9 @@
 
 <script>
 (function(){
-  // === КЛЮЧ 2ГИС ===
+  // === ТВОЙ КЛЮЧ 2ГИС УЖЕ В КОДЕ ===
   // Можно переопределить в URL: ?key=ВАШ_КЛЮЧ
+  // Если увидишь 403 при геокоде — включи "Catalog API" на этом ключе в platform.2gis.ru
   const DEFAULT_KEY = 'b071d8db-8fa6-4a9f-927e-85145f520db9';
   const URL_KEY = new URLSearchParams(location.search).get('key') || '';
   const KEY = URL_KEY || DEFAULT_KEY;
@@ -81,11 +82,41 @@
   function addLegendRow(s,c){ const host=$('#legend'); const t=document.createElement('div'); t.textContent=s||'(без статуса)'; const sw=document.createElement('div'); sw.className='swatch'; sw.style.background=c||'#7c3aed'; host.appendChild(t); host.appendChild(sw); }
   function rebuildLegend(){ const host=$('#legend'); host.innerHTML=''; const arr=Array.from(state.statusColor.entries()); if(!arr.length){ addLegendRow('Адреса','#7c3aed'); return;} arr.forEach(([s,c])=>addLegendRow(s,c)); }
 
-  function drawPolygon(coords,opts){ const p=new mapgl.Polygon(state.map,{ coordinates:[coords], strokeWidth:2, strokeColor:opts.strokeColor||'#000', color:opts.fill||'#00000033' }); state.layers.push(p); return p; }
+  // Преобразуем цвет в полупрозрачный (работает и с #rrggbb, и с hsl(...))
+  function withAlpha(color, a){
+    if(/^#([0-9a-f]{6})$/i.test(color)){
+      const r=parseInt(color.slice(1,3),16), g=parseInt(color.slice(3,5),16), b=parseInt(color.slice(5,7),16);
+      return `rgba(${r},${g},${b},${a})`;
+    }
+    if(/^hsl\(/i.test(color)){
+      return color.replace(/^hsl/i,'hsla').replace(/\)$/,`, ${a})`);
+    }
+    // fallback: оставим как есть (без прозрачности)
+    return color;
+  }
+
+  function drawPolygon(coords,opts){
+    const p=new mapgl.Polygon(state.map,{
+      coordinates:[coords],
+      strokeWidth:2,
+      strokeColor:opts.strokeColor||'#222',
+      color:opts.fill||withAlpha(opts.strokeColor||'#222',0.35)
+    });
+    state.layers.push(p); return p;
+  }
   function drawMarker(point,html){ const m=new mapgl.HtmlMarker(state.map,{ coordinates:point, html: html||'<div style="width:10px;height:10px;border-radius:50%;background:#111"></div>' }); state.layers.push(m); return m; }
 
-  function addListItem(item){ const el=document.createElement('div'); el.className='item'; el.innerHTML=`<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;"><div style="font-weight:600">${escapeHtml(item.address)}</div>${item.status?`<span class='pill' style='border:1px solid ${item.color||'#ddd'}'>${escapeHtml(item.status)}</span>`:''}</div><div class='muted'>${item.lat&&item.lon?`${item.lat.toFixed(6)}, ${item.lon.toFixed(6)}`:'—'}</div>`; el.addEventListener('click',()=>{ if(item.lon&&item.lat){ state.map.setCenter([item.lon,item.lat]); state.map.setZoom(17);} }); $('#list').appendChild(el); }
-  function escapeHtml(s){ return String(s||'').replace(/[&<>\"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;','\\'':'&#39;'}[c])); }
+  function addListItem(item){
+    const el=document.createElement('div');
+    el.className='item';
+    el.innerHTML=`<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;">
+      <div style="font-weight:600">${escapeHtml(item.address)}</div>
+      ${item.status?`<span class='pill' style='border:1px solid ${item.color||'#ddd'}'>${escapeHtml(item.status)}</span>`:''}
+    </div><div class='muted'>${item.lat&&item.lon?`${item.lat.toFixed(6)}, ${item.lon.toFixed(6)}`:'—'}</div>`;
+    el.addEventListener('click',()=>{ if(item.lon&&item.lat){ state.map.setCenter([item.lon,item.lat]); state.map.setZoom(17);} });
+    $('#list').appendChild(el);
+  }
+  function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
   // --- Parser ---
   function parseInput(text){
@@ -115,12 +146,25 @@
     if(!it) return null;
     const point=it.point?[it.point.lon,it.point.lat]:null;
     let polygonCoords=null; const g=it.geometry;
-    if(g && g.selection && Array.isArray(g.selection.contours)){ const c=g.selection.contours[0].points; if(Array.isArray(c)&&c.length){ polygonCoords=c.map(p=>[p[0]??p.lon??p.x,p[1]??p.lat??p.y]); } }
-    else if(g && g.coordinates){ const arr=g.coordinates?.[0]; if(Array.isArray(arr)&&arr.length){ polygonCoords=arr.map(pt=>[pt[0],pt[1]]); } }
+    if(g && g.selection && Array.isArray(g.selection.contours)){
+      const c=g.selection.contours[0].points;
+      if(Array.isArray(c)&&c.length){ polygonCoords=c.map(p=>[p[0]??p.lon??p.x,p[1]??p.lat??p.y]); }
+    } else if(g && g.coordinates){
+      const arr=g.coordinates?.[0];
+      if(Array.isArray(arr)&&arr.length){ polygonCoords=arr.map(pt=>[pt[0],pt[1]]); }
+    }
     return { point, polygonCoords };
   }
 
-  function ensureColor(item){ if(item.color) return item.color; if(!item.status) return '#7c3aed'; if(state.statusColor.has(item.status)) return state.statusColor.get(item.status); const h=Math.abs(hash(item.status))%360; const c=`hsl(${h} 90% 70%)`; state.statusColor.set(item.status,c); return c; }
+  function ensureColor(item){
+    if(item.color) return item.color; // #hex, hsl(...) — как дали
+    if(!item.status) return '#7c3aed';
+    if(state.statusColor.has(item.status)) return state.statusColor.get(item.status);
+    const h=Math.abs(hash(item.status))%360;
+    const c=`hsl(${h} 90% 45%)`; // понасыщенней, дальше сделаем прозрачность через withAlpha
+    state.statusColor.set(item.status,c);
+    return c;
+  }
   function hash(str){ let h=0; for(let i=0;i<str.length;i++){ h=((h<<5)-h)+str.charCodeAt(i); h|=0; } return h; }
 
   async function build(){
@@ -134,18 +178,22 @@
       try{
         const res=await geocode2GIS(key,item.address);
         if(!res){ addListItem(item); continue; }
+
         if(res.polygonCoords){
-          drawPolygon(res.polygonCoords,{ fill: color+'55', strokeColor: color });
+          drawPolygon(res.polygonCoords,{ fill: withAlpha(color,0.35), strokeColor: color });
           const centroid=res.polygonCoords.reduce((a,p)=>[a[0]+p[0],a[1]+p[1]],[0,0]).map(v=>v/res.polygonCoords.length);
           item.lon=centroid[0]; item.lat=centroid[1]; updateBounds(centroid);
-          drawMarker(centroid,`<div style="width:12px;height:12px;border-radius:999px;border:2px solid #fff;background:${color};box-shadow:0 0 0 2px ${color}55"></div>`);
+          drawMarker(centroid,`<div style="width:12px;height:12px;border-radius:999px;border:2px solid #fff;background:${color};box-shadow:0 0 0 2px ${withAlpha(color,0.35)}"></div>`);
         } else if(res.point){
           item.lon=res.point[0]; item.lat=res.point[1]; updateBounds(res.point);
-          drawMarker(res.point,`<div style="width:14px;height:14px;border-radius:999px;border:2px solid #fff;background:${color};box-shadow:0 0 0 2px ${color}55"></div>`);
+          drawMarker(res.point,`<div style="width:14px;height:14px;border-radius:999px;border:2px solid #fff;background:${color};box-shadow:0 0 0 2px ${withAlpha(color,0.35)}"></div>`);
         }
         addListItem(item);
         await new Promise(r=>setTimeout(r,120));
-      }catch(e){ console.warn('Ошибка геокодинга', item.address, e); addListItem(item); }
+      }catch(e){
+        console.warn('Ошибка геокодинга', item.address, e);
+        addListItem(item);
+      }
     }
     rebuildLegend(); fitToAll();
   }
@@ -156,7 +204,7 @@
   document.getElementById('btnClear').addEventListener('click', ()=>{ document.getElementById('addrInput').value=''; clearAll(); rebuildLegend(); });
   document.getElementById('btnFit').addEventListener('click', fitToAll);
 
-  // демо
+  // демо-ввод
   document.getElementById('addrInput').value = [
     '12\t970\tСаратов\t1-я Беговая\t13\t4',
     '20\t772\tСаратов\t1-й Кавказский\t10\t4'
