@@ -11,11 +11,11 @@
 
   <style>
     html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
-    #app { display: grid; grid-template-columns: 360px 1fr; height: 100%; }
+    #app { display: grid; grid-template-columns: 380px 1fr; height: 100%; }
     #sidebar { padding: 14px; border-right: 1px solid #eee; overflow: auto; }
     #map { width: 100%; height: 100%; }
     .panel { background: #fafafa; border: 1px solid #eaeaea; border-radius: 12px; padding: 12px; margin-bottom: 12px; }
-    .row { display: flex; gap: 8px; align-items: center; }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     .row input, .row button, textarea { font-size: 14px; }
     textarea { width: 100%; min-height: 120px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas; }
     .legend { display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; font-size: 13px; }
@@ -23,6 +23,7 @@
     .item { padding: 8px 10px; border-radius: 10px; border: 1px dashed #ddd; margin-bottom: 6px; cursor: pointer; }
     .muted { color: #666; font-size: 13px; }
     .pill { padding: 2px 6px; border-radius: 999px; font-size: 12px; background: #f1f5f9; border: 1px solid #e5e7eb; }
+    .hint { font-size: 12px; color:#475569; }
   </style>
 </head>
 <body>
@@ -30,14 +31,26 @@
   <div id="sidebar">
     <div class="panel">
       <div style="font-weight:700;">Карта монтажа — Leaflet/OSM</div>
-      <div class="muted">Вставь адреса → «Построить». Понимает и 6-колоночный формат.</div>
+      <div class="muted">Вставь адреса → «Построить» или загрузи файл. Теперь цвета по компаниям.</div>
     </div>
 
     <div class="panel">
-      <div style="font-weight:600; margin-bottom:6px;">Адреса</div>
+      <div style="font-weight:600; margin-bottom:6px;">Загрузка файла (CSV/TSV)</div>
+      <div class="row">
+        <input type="file" id="fileInput" accept=".csv,.tsv,.txt" />
+        <button id="btnBuildFile">Загрузить и построить</button>
+      </div>
+      <div class="hint" style="margin-top:8px;">
+        Требуемые колонки: <b>Город</b>, <b>Адрес</b>, <b>Компания</b> (порядок любой, разделитель — запятая/; / таб).
+      </div>
+    </div>
+
+    <div class="panel">
+      <div style="font-weight:600; margin-bottom:6px;">Адреса (ручной ввод)</div>
       <textarea id="addrInput" placeholder="Форматы:
-• Адрес[TAB]Статус[TAB]#Цвет
-• ID  ID2  Город  Улица  Дом  Подъезд  (через пробелы/табы). Статус = 'Подъезд N'."></textarea>
+• Город, Адрес [TAB] Компания
+• Адрес[TAB]Компания (если Адрес уже с городом)
+• Старый 6-колоночный: ID ID2 Город Улица Дом Подъезд"></textarea>
       <div class="row" style="margin-top:8px;">
         <button id="btnBuild">Построить</button>
         <button id="btnClear">Очистить</button>
@@ -46,7 +59,7 @@
     </div>
 
     <div class="panel">
-      <div style="font-weight:600; margin-bottom:6px;">Легенда статусов</div>
+      <div style="font-weight:600; margin-bottom:6px;">Легенда компаний</div>
       <div id="legend" class="legend"></div>
     </div>
 
@@ -61,7 +74,7 @@
 <script>
 (function(){
   // ===== Карта Leaflet (без ключей) =====
-  const map = L.map('map').setView([51.533, 46.033], 12); // по умолчанию — Саратов
+  const map = L.map('map').setView([51.533, 46.033], 12); // Саратов по умолчанию
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 20,
     attribution: '&copy; OpenStreetMap contributors'
@@ -85,44 +98,92 @@
     el.className='item';
     el.innerHTML=`<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;">
       <div style="font-weight:600">${escapeHtml(item.address)}</div>
-      ${item.status?`<span class='pill' style='border:1px solid ${item.color||'#ddd'}'>${escapeHtml(item.status)}</span>`:''}
+      ${item.company?`<span class='pill' style='border:1px solid ${item.color||'#ddd'}'>${escapeHtml(item.company)}</span>`:''}
     </div><div class='muted'>${item.lat&&item.lon?`${item.lat.toFixed(6)}, ${item.lon.toFixed(6)}`:'—'}</div>`;
     el.addEventListener('click',()=>{ if(item.lat&&item.lon){ map.setView([item.lat,item.lon], 17); } });
     $('#list').appendChild(el);
   }
   function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
-  // ===== Цвета/легенда =====
-  const statusColor = new Map();
+  // ===== Цвета по компаниям / легенда =====
+  const companyColor = new Map();
   function hash(str){ let h=0; for(let i=0;i<str.length;i++){ h=((h<<5)-h)+str.charCodeAt(i); h|=0; } return h; }
-  function ensureColor(item){
-    if(item.color) return item.color; // передан #hex/hsl
-    if(!item.status) return '#7c3aed';
-    if(statusColor.has(item.status)) return statusColor.get(item.status);
-    const h=Math.abs(hash(item.status))%360;
-    const c=`hsl(${h} 90% 45%)`;
-    statusColor.set(item.status,c);
+  function colorByCompany(company){
+    if(!company) return '#7c3aed';
+    if(companyColor.has(company)) return companyColor.get(company);
+    const h=Math.abs(hash(company))%360;
+    const c=`hsl(${h} 85% 45%)`;
+    companyColor.set(company,c);
     return c;
   }
-  function addLegendRow(s,c){ const host=$('#legend'); const t=document.createElement('div'); t.textContent=s||'(без статуса)'; const sw=document.createElement('div'); sw.className='swatch'; sw.style.background=c||'#7c3aed'; host.appendChild(t); host.appendChild(sw); }
+  function addLegendRow(s,c){ const host=$('#legend'); const t=document.createElement('div'); t.textContent=s||'(без компании)'; const sw=document.createElement('div'); sw.className='swatch'; sw.style.background=c||'#7c3aed'; host.appendChild(t); host.appendChild(sw); }
   function rebuildLegend(){
     const host=$('#legend'); host.innerHTML='';
-    const arr=Array.from(statusColor.entries());
+    const arr=Array.from(companyColor.entries());
     if(!arr.length){ addLegendRow('Адреса','#7c3aed'); return; }
+    arr.sort((a,b)=>a[0].localeCompare(b[0],'ru')); // упорядочим по имени компании
     arr.forEach(([s,c])=>addLegendRow(s,c));
   }
 
-  // ===== Парсер ввода =====
-  function parseInput(text){
+  // ===== Парсер ручного ввода =====
+  // Поддержка:
+  // 1) "Город, Адрес \t Компания"
+  // 2) "Адрес \t Компания" (если адрес уже включает город)
+  // 3) Старый 6-колоночный формат: ID ID2 City Street House Entrance
+  function parseTextarea(text){
     const lines=text.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
     const out=[];
     for(const line of lines){
-      // 6-колонок: ID ID2 City Street House Entrance
+      // 6 колонок
       const m6=/^(\S+)\s+(\S+)\s+(\S+)\s+(.+?)\s+(\S+)\s+(\S+)$/.exec(line);
-      if(m6){ const city=m6[3], street=m6[4], house=m6[5], entr=m6[6]; out.push({ address:`${city}, ${street} ${house}`, status:`Подъезд ${entr}`, color:'' }); continue; }
-      // Табами: Адрес \t Статус \t Цвет
+      if(m6){
+        const city=m6[3], street=m6[4], house=m6[5]; // entrance m6[6] игнорируем
+        out.push({ address:`${city}, ${street} ${house}`, company:'' });
+        continue;
+      }
+      // таб-разделитель с компанией
       const tab=line.split(/\t/);
-      if(tab.length>=1){ out.push({ address:tab[0]?.trim(), status:tab[1]?.trim()||'', color:(tab[2]?.trim()||'').toLowerCase() }); continue; }
+      if(tab.length>=2){
+        const addrRaw=tab[0]?.trim();
+        const company=tab[1]?.trim();
+        out.push({ address:addrRaw, company });
+        continue;
+      }
+      // попытка "Город, Адрес" без компании
+      out.push({ address: line, company: '' });
+    }
+    return out;
+  }
+
+  // ===== Парсер CSV/TSV =====
+  function detectDelimiter(text){
+    // приоритет: таб, ;, ,
+    const firstLine = text.split(/\r?\n/).find(l=>l.trim().length>0) || '';
+    const counts = {
+      '\t': (firstLine.match(/\t/g)||[]).length,
+      ';': (firstLine.match(/;/g)||[]).length,
+      ',': (firstLine.match(/,/g)||[]).length
+    };
+    return Object.entries(counts).sort((a,b)=>b[1]-a[1])[0][0] || ',';
+  }
+  function parseCSV(text){
+    const delim = detectDelimiter(text);
+    const rows = text.split(/\r?\n/).filter(l=>l.trim().length>0);
+    if(rows.length===0) return [];
+    // простейший CSV/TSV парсер без кавычек внутри — для наших задач достаточно
+    const header = rows[0].split(delim).map(s=>s.trim().toLowerCase());
+    const idxCity = header.findIndex(h=>/^(город|city)$/i.test(h));
+    const idxAddr = header.findIndex(h=>/^(адрес|address)$/i.test(h));
+    const idxCompany = header.findIndex(h=>/^(компан|company)/i.test(h));
+
+    const out=[];
+    for(let i=1;i<rows.length;i++){
+      const cols = rows[i].split(delim).map(s=>s.trim());
+      const city = idxCity>=0 ? cols[idxCity] : '';
+      const addr = idxAddr>=0 ? cols[idxAddr] : '';
+      const comp = idxCompany>=0 ? cols[idxCompany] : '';
+      const full = city ? `${city}, ${addr}` : addr;
+      if (full) out.push({ address: full, company: comp });
     }
     return out;
   }
@@ -156,20 +217,17 @@
     const obj = arr?.[0];
     if(!obj) return null;
     const point = obj.lon && obj.lat ? [parseFloat(obj.lon), parseFloat(obj.lat)] : null;
-    // Nominatim иногда отдаёт polygonpoints — пропустим, чаще всего нет
     return { point, polygon: null };
   }
 
   async function geocode(address){
     let res = await geocodePhoton(address);
     if (res) return res;
-    // пауза, чтобы не душить сервисы
     await new Promise(r=>setTimeout(r,150));
     return await geocodeNominatim(address);
   }
 
-  // ===== НАДЁЖНЫЙ поиск контура здания через Overpass =====
-  // Возвращает массив координат [ [lat, lon], ... ] или null
+  // ===== Поиск контура здания через Overpass =====
   async function fetchBuildingPolygon({ lon, lat }) {
     const R = 200; // радиус поиска в метрах
     const q = `
@@ -240,19 +298,18 @@
     return color;
   }
 
-  async function build(){
+  // ===== Общий строитель =====
+  async function buildFromItems(items){
     clearAll();
-    const items = parseInput(document.getElementById('addrInput').value);
     for(const item of items){
-      const color = ensureColor(item);
+      const color = colorByCompany(item.company||'');
       try{
         const res = await geocode(item.address);
-        if(!res){ addListItem(item); continue; }
+        if(!res){ addListItem({...item, color}); continue; }
 
         let latlng = null;
 
         if(res.polygon){
-          // Photon вернул полигон: [lon,lat] → [lat,lon]
           const ringLatLng = res.polygon.map(([lon,lat])=>[lat,lon]);
           const poly = L.polygon(ringLatLng, { color: color, weight: 2, fillColor: withAlpha(color,0.35) }).addTo(map);
           state.layers.push(poly);
@@ -260,8 +317,6 @@
 
         } else if(res.point){
           const [lon, lat] = res.point;
-
-          // 1) пробуем реальный контур из OSM (Overpass)
           let ring = null;
           try { ring = await fetchBuildingPolygon({ lon, lat }); } catch(e){ console.warn('Overpass fail', e); }
 
@@ -270,8 +325,7 @@
             state.layers.push(poly);
             latlng = poly.getBounds().getCenter();
           } else {
-            // 2) fallback — квадрат 30×30 м
-            const sq = squareAround([lon,lat], 30).map(([la,lo])=>[la,lo]); // уже [lat,lon]
+            const sq = squareAround([lon,lat], 30).map(([la,lo])=>[la,lo]);
             const poly = L.polygon(sq, { color: color, weight: 2, fillColor: withAlpha(color,0.35) }).addTo(map);
             const dot  = L.circleMarker([lat,lon], { radius: 4, color: '#fff', weight: 2, fillColor: color, fillOpacity: 1 }).addTo(map);
             state.layers.push(poly, dot);
@@ -283,28 +337,48 @@
           item.lat = latlng[0]; item.lon = latlng[1];
           state.bounds.extend(latlng);
         }
-        addListItem(item);
-        // мягкий лимит, чтобы не душить бесплатные API
+        addListItem({...item, color});
         await new Promise(r=>setTimeout(r,160));
       }catch(e){
         console.warn('Ошибка геокодинга', item.address, e);
-        addListItem(item);
+        addListItem({...item, color});
       }
     }
     rebuildLegend();
     if(state.bounds.isValid()) map.fitBounds(state.bounds.pad(0.2));
   }
 
-  document.getElementById('btnBuild').addEventListener('click', build);
-  document.getElementById('btnClear').addEventListener('click', ()=>{ document.getElementById('addrInput').value=''; clearAll(); rebuildLegend(); });
-  document.getElementById('btnFit').addEventListener('click', ()=>{ if(state.bounds.isValid()) map.fitBounds(state.bounds.pad(0.2)); });
+  // ===== Обработчики =====
+  document.getElementById('btnBuild').addEventListener('click', ()=>{
+    const items = parseTextarea(document.getElementById('addrInput').value);
+    buildFromItems(items);
+  });
 
-  // демо-ввод (твои примеры)
+  document.getElementById('btnBuildFile').addEventListener('click', async ()=>{
+    const f = document.getElementById('fileInput').files?.[0];
+    if(!f){ alert('Выбери файл CSV/TSV'); return; }
+    const text = await f.text();
+    const items = parseCSV(text);
+    if(items.length===0){ alert('Не удалось прочитать данные. Проверь колонки: Город, Адрес, Компания.'); return; }
+    buildFromItems(items);
+  });
+
+  document.getElementById('btnClear').addEventListener('click', ()=>{
+    document.getElementById('addrInput').value='';
+    clearAll(); companyColor.clear(); rebuildLegend();
+  });
+
+  document.getElementById('btnFit').addEventListener('click', ()=>{
+    if(state.bounds.isValid()) map.fitBounds(state.bounds.pad(0.2));
+  });
+
+  // демо-вставка для ручного ввода
   document.getElementById('addrInput').value = [
-    '12\t970\tСаратов\t1-я Беговая\t13\t4',
-    '20\t772\tСаратов\t1-й Кавказский\t10\t4',
-    'Саратов, Рахова 169/171'
+    'Саратов, 1-я Беговая 13\tООО Бета',
+    'Саратов, 1-й Кавказский 10\tООО Бета',
+    'Саратов, Рахова 169/171\tООО Альфа'
   ].join('\n');
+
 })();
 </script>
 </body>
