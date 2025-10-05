@@ -41,7 +41,7 @@
         <button id="btnBuildFile">Загрузить и построить</button>
       </div>
       <div class="hint" style="margin-top:8px;">
-        Колонки: <b>Город</b>, <b>Адрес</b>, <b>Компания</b>. Формат адреса: «г. Саратов, улица Рахова, 169/171».
+        Колонки: <b>Город</b>, <b>Адрес</b>, <b>Компания</b>. Если разделитель — запятая, адреса с запятыми оборачивай в кавычки.
       </div>
     </div>
 
@@ -81,17 +81,10 @@
 (function(){
   // ===== Карта =====
   const map = L.map('map').setView([51.533, 46.033], 12);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 20,
-    attribution: '&copy; OpenStreetMap contributors'
-  }).addTo(map);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 20, attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
 
   const $ = (s)=>document.querySelector(s);
-  const state = {
-    layers: [],                  // массив Leaflet-слоёв
-    labelEntries: [],            // [{layer, label}]
-    bounds: L.latLngBounds()
-  };
+  const state = { layers: [], labelEntries: [], bounds: L.latLngBounds() };
 
   function clearAll(){
     state.layers.forEach(l => map.removeLayer(l));
@@ -134,61 +127,76 @@
   }
 
   // ===== Парсеры =====
+  // 1) Ручной ввод: поддержка табов и 6-колоночного
   function parseTextarea(text){
     const lines=text.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
     const out=[];
     for(const line of lines){
-      // 6 колонок: ID ID2 City Street House Entrance
       const m6=/^(\S+)\s+(\S+)\s+(\S+)\s+(.+?)\s+(\S+)\s+(\S+)$/.exec(line);
-      if(m6){
-        const city=m6[3], street=m6[4], house=m6[5];
-        out.push({ address:`${city}, ${street} ${house}`, company:'' });
-        continue;
-      }
-      // таб-раздел: Адрес \t Компания
+      if(m6){ const city=m6[3], street=m6[4], house=m6[5]; out.push({ address:`${city}, ${street} ${house}`, company:'' }); continue; }
       const tab=line.split(/\t/);
-      if(tab.length>=2){
-        const addrRaw=tab[0]?.trim();
-        const company=tab[1]?.trim();
-        out.push({ address:addrRaw, company });
-        continue;
-      }
+      if(tab.length>=2){ out.push({ address:tab[0].trim(), company:tab[1].trim() }); continue; }
       out.push({ address: line, company: '' });
     }
     return out;
   }
 
+  // 2) Файл: надёжный CSV/TSV парсер c кавычками
+  function stripBOM(s){ return s.replace(/^\uFEFF/, ''); }
+  function smartSplit(line, delim){
+    const out=[], d = delim, n = line.length;
+    let cur='', inQ=false;
+    for(let i=0;i<n;i++){
+      const ch=line[i];
+      if(ch === '"'){
+        if(inQ && line[i+1] === '"'){ cur+='"'; i++; }
+        else inQ=!inQ;
+      } else if(!inQ && ch === d){
+        out.push(cur); cur='';
+      } else {
+        cur+=ch;
+      }
+    }
+    out.push(cur);
+    return out.map(s=>s.trim());
+  }
   function detectDelimiter(text){
-    const firstLine = text.split(/\r?\n/).find(l=>l.trim().length>0) || '';
-    const counts = {'\t': (firstLine.match(/\t/g)||[]).length,';': (firstLine.match(/;/g)||[]).length,',': (firstLine.match(/,/g)||[]).length};
-    return Object.entries(counts).sort((a,b)=>b[1]-a[1])[0][0] || ',';
+    const sample = stripBOM(text).split(/\r?\n/).filter(l=>l.trim()).slice(0,6);
+    const cands=[',',';','\t'];
+    function score(d){
+      const cols = sample.map(l=>smartSplit(l,d).length);
+      const min=Math.min(...cols), max=Math.max(...cols);
+      return {d, spread:max-min, maxCols:Math.max(...cols)};
+    }
+    return cands.map(score).sort((a,b)=> a.spread-b.spread || b.maxCols-a.maxCols)[0].d;
   }
   function parseCSV(text){
-    const delim = detectDelimiter(text);
-    const rows = text.split(/\r?\n/).filter(l=>l.trim().length>0);
+    const t = stripBOM(text);
+    const delim = detectDelimiter(t);
+    const rows = t.split(/\r?\n/).filter(l=>l.trim().length>0);
     if(rows.length===0) return [];
-    const header = rows[0].split(delim).map(s=>s.trim().toLowerCase());
-    const idxCity = header.findIndex(h=>/^(город|city)$/i.test(h));
-    const idxAddr = header.findIndex(h=>/^(адрес|address)$/i.test(h));
-    const idxCompany = header.findIndex(h=>/^(компан|company)/i.test(h));
-
+    const header = smartSplit(rows[0], delim).map(h=>h.replace(/^"|"$/g,'').trim().toLowerCase());
+    const idxCity    = header.findIndex(h=>/^(город|city)$/.test(h));
+    const idxAddr    = header.findIndex(h=>/^(адрес|address)$/.test(h));
+    const idxCompany = header.findIndex(h=>/^(компан|company)/.test(h));
     const out=[];
     for(let i=1;i<rows.length;i++){
-      const cols = rows[i].split(delim).map(s=>s.trim());
+      const cols = smartSplit(rows[i], delim).map(v=>{
+        if(v.startsWith('"') && v.endsWith('"')) v=v.slice(1,-1).replace(/""/g,'"');
+        return v.trim();
+      });
       const city = idxCity>=0 ? cols[idxCity] : '';
       const addr = idxAddr>=0 ? cols[idxAddr] : '';
       const comp = idxCompany>=0 ? cols[idxCompany] : '';
       const full = city ? `${city}, ${addr}` : addr;
-      if (full) out.push({ address: full, company: comp });
+      if(full) out.push({ address: full, company: comp });
     }
     return out;
   }
 
   // ===== Геокодеры =====
   async function geocodePhoton(address){
-    const url = new URL('https://photon.komoot.io/api/');
-    url.searchParams.set('q', address);
-    url.searchParams.set('limit', '1');
+    const url = new URL('https://photon.komoot.io/api/'); url.searchParams.set('q', address); url.searchParams.set('limit', '1');
     const r = await fetch(url.toString(), { headers: { 'Accept': 'application/json' } });
     if(!r.ok) return null;
     const j = await r.json();
@@ -202,9 +210,7 @@
   }
   async function geocodeNominatim(address){
     const url = new URL('https://nominatim.openstreetmap.org/search');
-    url.searchParams.set('q', address);
-    url.searchParams.set('format', 'jsonv2');
-    url.searchParams.set('limit', '1');
+    url.searchParams.set('q', address); url.searchParams.set('format', 'jsonv2'); url.searchParams.set('limit', '1');
     const r = await fetch(url.toString(), { headers: { 'Accept': 'application/json' } });
     if(!r.ok) return null;
     const arr = await r.json();
@@ -247,19 +253,14 @@
     }
 
     let best = null, bestD = Infinity;
-
     for (const el of data.elements) {
       if ((el.type === 'way' || el.type === 'relation') && Array.isArray(el.geometry) && el.geometry.length >= 4) {
         const ring = el.geometry.map(p => [p.lat, p.lon]);
         const first = ring[0], last = ring[ring.length - 1];
         if (first[0] !== last[0] || first[1] !== last[1]) ring.push(first);
-        // центр bbox
         let minLat=+Infinity, minLon=+Infinity, maxLat=-Infinity, maxLon=-Infinity;
-        for (const [la,lo] of ring) {
-          if (la<minLat) minLat=la; if (la>maxLat) maxLat=la;
-          if (lo<minLon) minLon=lo; if (lo>maxLon) maxLon=lo;
-        }
-        const cLat = (minLat+maxLat)/2, cLon = (minLon+maxLon)/2;
+        for (const [la,lo] of ring) { if (la<minLat) minLat=la; if (la>maxLat) maxLat=la; if (lo<minLon) minLon=lo; if (lo>maxLon) maxLon=lo; }
+        const cLat=(minLat+maxLat)/2, cLon=(minLon+maxLon)/2;
         const d = dist2(cLat, cLon, lat, lon);
         if (d < bestD) { bestD = d; best = ring; }
       }
@@ -289,34 +290,23 @@
     return color;
   }
 
-  // ===== Подписи (tooltip) переключатель =====
+  // ===== Подписи/попапы =====
   function applyTooltip(layer, label){
     const permanent = $('#chkLabels').checked;
     if (layer._tooltip) layer.unbindTooltip();
-    layer.bindTooltip(label, {
-      permanent,
-      direction: 'top',
-      className: 'company-tooltip',
-      sticky: !permanent
-    });
+    layer.bindTooltip(label, { permanent, direction: 'top', className: 'company-tooltip', sticky: !permanent });
     if (permanent) layer.openTooltip();
   }
   function reapplyAllTooltips(){
     const permanent = $('#chkLabels').checked;
     state.labelEntries.forEach(({layer, label})=>{
       if (layer._tooltip) layer.unbindTooltip();
-      layer.bindTooltip(label, {
-        permanent,
-        direction: 'top',
-        className: 'company-tooltip',
-        sticky: !permanent
-      });
+      layer.bindTooltip(label, { permanent, direction: 'top', className: 'company-tooltip', sticky: !permanent });
       if (permanent) layer.openTooltip();
     });
   }
   $('#chkLabels').addEventListener('change', reapplyAllTooltips);
 
-  // ===== Popup (карточка адреса) =====
   function popupHtml({company, address, color, lat, lon}){
     const coord = (lat&&lon) ? `<div class='muted' style="margin-top:6px">${lat.toFixed(6)}, ${lon.toFixed(6)}</div>` : '';
     return `
@@ -335,10 +325,8 @@
       const color = colorByCompany(item.company||'');
       try{
         const res = await geocode(item.address);
-        if(!res){
-          addListItem({...item, color});
-          continue;
-        }
+        if(!res){ addListItem({...item, color}); continue; }
+
         let latlng = null;
 
         if(res.polygon){
@@ -346,7 +334,6 @@
           const poly = L.polygon(ringLatLng, { color: color, weight: 2, fillColor: withAlpha(color,0.35) }).addTo(map);
           state.layers.push(poly);
           latlng = poly.getBounds().getCenter();
-          // подпись и попап
           const label = item.company || '';
           applyTooltip(poly, label);
           poly.bindPopup(popupHtml({company:item.company,address:item.address,color,lat:latlng.lat||latlng[0],lon:latlng.lng||latlng[1]}));
@@ -417,9 +404,9 @@
 
   // демо-вставка
   document.getElementById('addrInput').value = [
-    'г. Саратов, улица 1-я Беговая, 13\tООО Бета',
-    'г. Саратов, улица 1-й Кавказский, 10\tООО Бета',
-    'г. Саратов, улица Рахова, 169/171\tООО Альфа'
+    'г. Саратов, "улица 1-я Беговая, 13"\tООО Бета',
+    'г. Саратов, "улица 1-й Кавказский, 10"\tООО Бета',
+    'г. Саратов, "улица Рахова, 169/171"\tООО Альфа'
   ].join('\n');
 })();
 </script>
