@@ -108,15 +108,28 @@
 
   // ===== Цвета по компаниям / легенда =====
   const companyColor = new Map();
+  // контрастная палитра (30+ цветов), хорошо различимая
+  const CONTRAST_COLORS = [
+    '#e6194b','#3cb44b','#ffe119','#4363d8','#f58231','#911eb4',
+    '#46f0f0','#f032e6','#bcf60c','#fabebe','#008080','#e6beff',
+    '#9a6324','#fffac8','#800000','#aaffc3','#808000','#ffd8b1',
+    '#000075','#808080','#7f7f7f','#42d4f4','#bfef45','#ffd700',
+    '#0082c8','#aa6e28','#d2f53c','#d66dd6','#00a2e8','#ffaec9',
+    '#a10000','#00a100','#0044a1'
+  ];
+
   function hash(str){ let h=0; for(let i=0;i<str.length;i++){ h=((h<<5)-h)+str.charCodeAt(i); h|=0; } return h; }
+
+  // стабильное назначение контрастного цвета по имени компании
   function colorByCompany(company){
     if(!company) return '#7c3aed';
     if(companyColor.has(company)) return companyColor.get(company);
-    const h=Math.abs(hash(company))%360;
-    const c=`hsl(${h} 85% 45%)`;
+    const idx = Math.abs(hash(company)) % CONTRAST_COLORS.length;
+    const c = CONTRAST_COLORS[idx];
     companyColor.set(company,c);
     return c;
   }
+
   function addLegendRow(s,c){ const host=$('#legend'); const t=document.createElement('div'); t.textContent=s||'(без компании)'; const sw=document.createElement('div'); sw.className='swatch'; sw.style.background=c||'#7c3aed'; host.appendChild(t); host.appendChild(sw); }
   function rebuildLegend(){
     const host=$('#legend'); host.innerHTML='';
