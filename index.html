@@ -45,7 +45,7 @@
       cursor: pointer;
     }
 
-    /* Метки номеров домов (компактные) */
+    /* Метки номеров домов — компактные, без «палочек» */
     .house-label {
       background: transparent;
       border: none;
@@ -54,8 +54,8 @@
     }
     .house-label .hl {
       display: inline-block;
-      padding: 0 4px;
-      font-size: 10px;
+      padding: 0 3px;
+      font-size: 9px;             /* было 10px → стало чуть меньше */
       font-weight: 700;
       background: rgba(255,255,255,.95);
       border: 2px solid var(--hl-color, rgba(0,0,0,.25));
@@ -136,13 +136,13 @@
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 20, attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
 
   const $ = (s)=>document.querySelector(s);
-  const state = { layers: [], labelEntries: [], bounds: L.latLngBounds(), items: [], numberLabels: [] };
+  const state = { layers: [], labelEntries: [], bounds: L.latLngBounds(), items: [], numberMarkers: [] };
 
   function clearAll(){
     state.layers.forEach(l => map.removeLayer(l));
-    state.numberLabels.forEach(obj => { if(obj.line) map.removeLayer(obj.line); if(obj.marker) map.removeLayer(obj.marker); });
+    state.numberMarkers.forEach(m => map.removeLayer(m));
     state.layers = [];
-    state.numberLabels = [];
+    state.numberMarkers = [];
     state.labelEntries = [];
     state.items = [];
     state.bounds = L.latLngBounds();
@@ -202,13 +202,10 @@
     }
   }
   function recolorHouseLabels(company, color){
-    for(const obj of state.numberLabels){
-      if(obj.company === company){
-        if (obj.marker && obj.marker._icon){
-          const span = obj.marker._icon.querySelector('.hl');
-          if(span) span.style.setProperty('--hl-color', color);
-        }
-        if (obj.line) obj.line.setStyle({color});
+    for(const m of state.numberMarkers){
+      if(m && m._company === company && m._icon){
+        const span = m._icon.querySelector('.hl');
+        if(span) span.style.setProperty('--hl-color', color);
       }
     }
   }
@@ -412,7 +409,7 @@
     return best || null;
   }
 
-  // ===== Геометрия, подписи, «палочки» и антистолкновение =====
+  // ===== Геометрия и размещение номеров (без «палочек») =====
   function squareAround([lon, lat], meters = 30){
     const dLat = (meters / 111320);
     const dLon = (meters / (40075000 * Math.cos(lat*Math.PI/180) / 360));
@@ -446,9 +443,7 @@
   function latLngWithPixelOffset(baseLatLng, dx, dy){
     const p = map.latLngToLayerPoint(baseLatLng);
     return map.layerPointToLatLng(L.point(p.x + dx, p.y + dy));
-    // (dx,dy) в пикселях относительно экрана
   }
-
   function rectsIntersect(a,b){ return !(a.right < b.left || a.left > b.right || a.bottom < b.top || a.top > b.bottom); }
 
   function placeHouseLabel(baseLatLng, text, company){
@@ -456,71 +451,41 @@
     const html = `<span class="hl" style="--hl-color:${color}">${escapeHtml(text)}</span>`;
     const icon = L.divIcon({ className:'house-label', html, iconSize: null });
 
-    // Кандидаты смещений (пиксели): по кольцам радиусов и 8 направлений
-    const radii = [22, 30, 38, 48, 60];
+    // расставляем без «палочек»: ищем свободную позицию вокруг дома
+    const radii = [18, 24, 30, 38, 48]; // компактнее и ближе к дому
     const dirs  = [[1,0],[0,1],[-1,0],[0,-1],[1,1],[-1,1],[-1,-1],[1,-1]];
-    const used = []; // DOMRect уже занятых меток
+    const used = state.numberMarkers.map(m => m._icon?.getBoundingClientRect()).filter(Boolean);
 
-    // собрать уже занятые прямоугольники на экране
-    for(const obj of state.numberLabels){
-      if(obj.marker && obj.marker._icon){
-        used.push(obj.marker._icon.getBoundingClientRect());
-      }
-    }
-
-    let placedMarker=null, chosenLatLng=null, chosenRect=null, chosenOffset=[0,0];
+    let marker=null;
     for(const R of radii){
+      let ok=false;
       for(const [sx,sy] of dirs){
-        const dx = Math.round(R*sx), dy = Math.round(R*sy);
-        const cand = latLngWithPixelOffset(baseLatLng, dx, dy);
+        const cand = latLngWithPixelOffset(baseLatLng, Math.round(R*sx), Math.round(R*sy));
         const mk = L.marker(cand, { icon, interactive:false, keyboard:false }).addTo(map);
-        // измеряем
         const rect = mk._icon.getBoundingClientRect();
-        const pad = 2;
-        const grown = {left:rect.left-pad, top:rect.top-pad, right:rect.right+pad, bottom:rect.bottom+pad};
-        if(!used.some(r=>rectsIntersect(grown, r))){
-          placedMarker = mk; chosenLatLng = cand; chosenRect=grown; chosenOffset=[dx,dy];
-          break;
-        } else {
-          map.removeLayer(mk);
+        const grow = {left:rect.left-2, top:rect.top-2, right:rect.right+2, bottom:rect.bottom+2};
+        if(!used.some(r=>rectsIntersect(grow, r))){
+          marker = mk; ok=true; break;
         }
+        map.removeLayer(mk);
       }
-      if(placedMarker) break;
+      if(ok) break;
     }
-    // если вообще не нашли свободное — поставим хотя бы с первым смещением
-    if(!placedMarker){
-      const cand = latLngWithPixelOffset(baseLatLng, 22, -22);
-      placedMarker = L.marker(cand, { icon, interactive:false, keyboard:false }).addTo(map);
-      chosenLatLng = cand; chosenRect = placedMarker._icon.getBoundingClientRect(); chosenOffset=[22,-22];
+    if(!marker){
+      marker = L.marker(baseLatLng, { icon, interactive:false, keyboard:false }).addTo(map);
     }
-
-    // «палочка» от центра до метки
-    const colorLine = color;
-    const line = L.polyline([baseLatLng, chosenLatLng], { color: colorLine, weight: 1.5, opacity: 0.9 }).addTo(map);
-
-    placedMarker._company = company || '';
-    const entry = { marker: placedMarker, line, base: baseLatLng, company: company||'', offset: chosenOffset };
-    state.numberLabels.push(entry);
+    marker._company = company || '';
+    state.numberMarkers.push(marker);
   }
 
   function rebuildHouseLabels(){
-    // удалить предыдущие
-    state.numberLabels.forEach(obj=>{ if(obj.marker) map.removeLayer(obj.marker); if(obj.line) map.removeLayer(obj.line); });
-    state.numberLabels = [];
+    state.numberMarkers.forEach(m => map.removeLayer(m));
+    state.numberMarkers = [];
     if(!$('#chkHnums').checked) return;
-    // ставим заново с антистолкновением
-    state.items.forEach(it => { if(it.lat!=null && it.lon!=null){ placeHouseLabel([it.lat,it.lon], extractHouse(it.address), it.company||''); } });
+    state.items.forEach(it => { if(it.lat!=null && it.lon!=null) placeHouseLabel([it.lat,it.lon], extractHouse(it.address), it.company||''); });
   }
-
-  function recolorLinesOnMove(){
-    // при перемещении/зуме нужно перерисовать линии и метки с учётом новых экранных координат
-    if(!$('#chkHnums').checked) return;
-    // перестраиваем полностью (быстро и надёжно)
-    rebuildHouseLabels();
-  }
-
+  map.on('zoomend moveend', rebuildHouseLabels);
   $('#chkHnums').addEventListener('change', rebuildHouseLabels);
-  map.on('zoomend moveend', recolorLinesOnMove);
 
   function popupHtml({company, address, color, lat, lon}){
     const coord = (lat!=null&&lon!=null) ? `<div class='muted' style="margin-top:6px">${lat.toFixed(6)}, ${lon.toFixed(6)}</div>` : '';
@@ -601,7 +566,7 @@
     }
     rebuildLegend();
     if(state.bounds.isValid()) map.fitBounds(state.bounds.pad(0.2));
-    rebuildHouseLabels(); // строим метки номеров с «палочками»
+    rebuildHouseLabels(); // метки номеров без «палочек»
   }
 
   // ===== Обработчики =====
