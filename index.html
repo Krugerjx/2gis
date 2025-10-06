@@ -630,7 +630,9 @@
 
           const label = item.company || '';
           applyTooltip(poly, label);
-          poly.bindPopup(popupHtml({company:item.company,address:item.address,color,lat:latlng.lat||latlng[0],lon:latlng.lng||latlng[1]}));
+          const _lat = latlng.lat!==undefined ? latlng.lat : latlng[0];
+          const _lon = latlng.lng!==undefined ? latlng.lng : latlng[1];
+          poly.bindPopup(popupHtml({company:item.company,address:item.address,color,lat:_lat,lon:_lon}));
           state.labelEntries.push({layer: poly, label});
         }
 
@@ -706,7 +708,6 @@
 
   // ===== Экспорт карты с ТОЛЬКО выбранными =====
   function coordsFromLatLngs(latlngs){
-    // Приводим структуру Leaflet LatLng[][][] к массивам чисел
     if(Array.isArray(latlngs)){
       if(latlngs.length && latlngs[0] && typeof latlngs[0].lat === 'number'){
         return latlngs.map(p=>[p.lat, p.lng]);
@@ -757,7 +758,7 @@
   </div>
   <div id="mapx"></div>
 </div>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"><\/script>
 <script>
 const data = ${JSON.stringify(features)};
 function extractHouse(address){
@@ -774,7 +775,6 @@ const bounds = L.latLngBounds();
 const companies = new Map();
 
 function toLatLngs(arr){
-  // arr может быть [ [lat,lng], ... ] или [[[...]], ...]
   if(Array.isArray(arr) && arr.length && Array.isArray(arr[0]) && typeof arr[0][0]==='number'){
     return arr.map(p=>L.latLng(p[0],p[1]));
   }
@@ -815,7 +815,7 @@ Array.from(companies.entries()).sort((a,b)=>a[0].localeCompare(b[0],'ru')).forEa
   leg.appendChild(sw); leg.appendChild(label);
 });
 if(bounds.isValid()) map.fitBounds(bounds.pad(0.15));
-</script>
+<\/script>
 </body></html>`;
     const w = window.open('', '_blank');
     if(!w){ alert('Разреши всплывающие окна для экспорта карты.'); return; }
