@@ -45,7 +45,7 @@
       cursor: pointer;
     }
 
-    /* Метки номеров домов */
+    /* Метки номеров домов (компактные) */
     .house-label {
       background: transparent;
       border: none;
@@ -54,15 +54,16 @@
     }
     .house-label .hl {
       display: inline-block;
-      padding: 1px 6px;
-      font-size: 12px;
+      padding: 0 4px;
+      font-size: 10px;
       font-weight: 700;
-      background: rgba(255,255,255,.92);
+      background: rgba(255,255,255,.95);
       border: 2px solid var(--hl-color, rgba(0,0,0,.25));
       border-radius: 6px;
-      box-shadow: 0 1px 4px rgba(0,0,0,.12);
+      box-shadow: 0 1px 3px rgba(0,0,0,.10);
       line-height: 1.1;
       white-space: nowrap;
+      user-select: none;
     }
   </style>
 </head>
@@ -91,7 +92,7 @@
         <div class="row" style="gap:12px;">
           <label class="row" style="gap:6px;">
             <input type="checkbox" id="chkLabels" />
-            Показывать подписи на карте
+            Подписи компаний
           </label>
           <label class="row" style="gap:6px;">
             <input type="checkbox" id="chkHnums" />
@@ -135,13 +136,13 @@
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 20, attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
 
   const $ = (s)=>document.querySelector(s);
-  const state = { layers: [], labelEntries: [], bounds: L.latLngBounds(), items: [], numberMarkers: [] };
+  const state = { layers: [], labelEntries: [], bounds: L.latLngBounds(), items: [], numberLabels: [] };
 
   function clearAll(){
     state.layers.forEach(l => map.removeLayer(l));
-    state.numberMarkers.forEach(m => map.removeLayer(m));
+    state.numberLabels.forEach(obj => { if(obj.line) map.removeLayer(obj.line); if(obj.marker) map.removeLayer(obj.marker); });
     state.layers = [];
-    state.numberMarkers = [];
+    state.numberLabels = [];
     state.labelEntries = [];
     state.items = [];
     state.bounds = L.latLngBounds();
@@ -169,19 +170,15 @@
 
   // ===== Цвета по компаниям / легенда =====
   const companyColor = new Map();
-
-  // Контрастная палитра
   const CONTRAST_COLORS = [
     '#e6194b','#3cb44b','#ffe119','#4363d8','#f58231','#911eb4',
     '#46f0f0','#f032e6','#bcf60c','#fabebe','#008080','#e6beff',
-    '#9a6324','#fffac8','#800000','#aaffc3','#808000','#ffd8б1',
+    '#9a6324','#fffac8','#800000','#aaffc3','#808000','#ffd8b1',
     '#000075','#808080','#7f7f7f','#42d4f4','#bfef45','#ffd700',
     '#0082c8','#aa6e28','#d2f53c','#d66dd6','#00a2e8','#ffaec9',
     '#a10000','#00a100','#0044a1','#7f007f','#00a199','#ff7f00'
   ];
-
   function hash(str){ let h=0; for(let i=0;i<str.length;i++){ h=((h<<5)-h)+str.charCodeAt(i); h|=0; } return h; }
-
   function colorByCompany(company){
     if(!company) return '#7c3aed';
     if(companyColor.has(company)) return companyColor.get(company);
@@ -190,7 +187,6 @@
     companyColor.set(company,c);
     return c;
   }
-
   function setCompanyColor(company, color){
     companyColor.set(company, color);
     recolorCompanyLayers(company, color);
@@ -198,7 +194,6 @@
     rebuildLegend();
     rerenderList();
   }
-
   function recolorCompanyLayers(company, color){
     for(const layer of state.layers){
       if(layer && layer._company === company && typeof layer.setStyle === 'function'){
@@ -207,14 +202,16 @@
     }
   }
   function recolorHouseLabels(company, color){
-    for(const m of state.numberMarkers){
-      if(m && m._company === company && m._icon){
-        const span = m._icon.querySelector('.hl');
-        if(span) span.style.setProperty('--hl-color', color);
+    for(const obj of state.numberLabels){
+      if(obj.company === company){
+        if (obj.marker && obj.marker._icon){
+          const span = obj.marker._icon.querySelector('.hl');
+          if(span) span.style.setProperty('--hl-color', color);
+        }
+        if (obj.line) obj.line.setStyle({color});
       }
     }
   }
-
   function addLegendRow(s,c){
     const host=$('#legend');
     const t=document.createElement('div'); t.textContent=s||'(без компании)';
@@ -227,7 +224,6 @@
     }
     host.appendChild(t); host.appendChild(sw);
   }
-
   function rebuildLegend(){
     const host=$('#legend'); host.innerHTML='';
     const arr=Array.from(companyColor.entries());
@@ -236,10 +232,9 @@
     arr.forEach(([s,c])=>addLegendRow(s,c));
   }
 
-  // ===== Палитра выбора цвета (UI) =====
+  // ===== Палитра выбора цвета =====
   const pickerEl = document.getElementById('colorPicker');
   let pickerCompany = null;
-
   (function fillPalette(){
     pickerEl.style.display='grid';
     pickerEl.innerHTML='';
@@ -252,7 +247,6 @@
     });
     pickerEl.style.display='none';
   })();
-
   function openColorPickerFor(company, anchor){
     pickerCompany = company;
     const r = anchor.getBoundingClientRect();
@@ -284,50 +278,32 @@
       .replace(/\s+/g,' ')
       .trim();
   }
-
   function parseTextarea(text){
     const raw = text.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
     const out=[];
     for(let i=0;i<raw.length;i++){
       let line = raw[i];
-
       const parts = line.split(/\t/);
       if (parts.length >= 2){
         out.push({ address: parts[0].trim(), company: normalizeCompany(parts.slice(1).join(' ').trim()) });
         continue;
       }
-
       let m = line.match(/^(.*?)(?:\s{2,}|[—\-:;|]\s*)(\b(?:ООО|ОАО|ПАО|ЗАО|АО|ИП|OOO|LLC|LTD|GMBH|[0OО]{3})\b\.?\s*.*)$/i);
-      if(m){
-        out.push({ address: m[1].trim(), company: normalizeCompany(m[2]) });
-        continue;
-      }
-
-      if(i+1 < raw.length && isCompanyLine(raw[i+1])){
-        out.push({ address: line, company: normalizeCompany(raw[i+1]) });
-        i++;
-        continue;
-      }
-
+      if(m){ out.push({ address: m[1].trim(), company: normalizeCompany(m[2]) }); continue; }
+      if(i+1 < raw.length && isCompanyLine(raw[i+1])){ out.push({ address: line, company: normalizeCompany(raw[i+1]) }); i++; continue; }
       out.push({ address: line, company: '' });
     }
     return out;
   }
-
   function stripBOM(s){ return s.replace(/^\uFEFF/, ''); }
   function smartSplit(line, delim){
     const out=[], d = delim, n = line.length;
     let cur='', inQ=false;
     for(let i=0;i<n;i++){
       const ch=line[i];
-      if(ch === '"'){
-        if(inQ && line[i+1] === '"'){ cur+='"'; i++; }
-        else inQ=!inQ;
-      } else if(!inQ && ch === d){
-        out.push(cur); cur='';
-      } else {
-        cur+=ch;
-      }
+      if(ch === '"'){ if(inQ && line[i+1] === '"'){ cur+='"'; i++; } else inQ=!inQ; }
+      else if(!inQ && ch === d){ out.push(cur); cur=''; }
+      else { cur+=ch; }
     }
     out.push(cur);
     return out.map(s=>s.trim());
@@ -374,7 +350,7 @@
     const j = await r.json();
     const f = j?.features?.[0];
     if(!f) return null;
-    const point = f.geometry?.type==='Point' ? f.geometry.coordinates : null;
+    const point = f.geometry?.type==='Point' ? f.geometry.coordinates : null; // [lon, lat]
     let polygon = null;
     if (f.geometry?.type === 'Polygon') polygon = f.geometry.coordinates[0];
     if (f.geometry?.type === 'MultiPolygon') polygon = f.geometry.coordinates[0][0];
@@ -419,11 +395,7 @@
     const data = await resp.json();
     if (!Array.isArray(data.elements) || !data.elements.length) return null;
 
-    function dist2(aLat, aLon, bLat, bLon) {
-      const dLat = (aLat - bLat), dLon = (aLon - bLon);
-      return dLat*dLat + dLon*dLon;
-    }
-
+    function dist2(aLat, aLon, bLat, bLon) { const dLat = (aLat - bLat), dLon = (aLon - bLon); return dLat*dLat + dLon*dLon; }
     let best = null, bestD = Infinity;
     for (const el of data.elements) {
       if ((el.type === 'way' || el.type === 'relation') && Array.isArray(el.geometry) && el.geometry.length >= 4) {
@@ -440,16 +412,11 @@
     return best || null;
   }
 
-  // ===== Геометрия и подписи =====
+  // ===== Геометрия, подписи, «палочки» и антистолкновение =====
   function squareAround([lon, lat], meters = 30){
     const dLat = (meters / 111320);
     const dLon = (meters / (40075000 * Math.cos(lat*Math.PI/180) / 360));
-    return [
-      [lat+dLat, lon-dLon],
-      [lat+dLat, lon+dLon],
-      [lat-dLat, lon+dLon],
-      [lat-dLat, lon-dLon]
-    ];
+    return [[lat+dLat, lon-dLon],[lat+dLat, lon+dLon],[lat-dLat, lon+dLon],[lat-dLat, lon-dLon]];
   }
 
   function applyTooltip(layer, label){
@@ -468,41 +435,99 @@
   }
   $('#chkLabels').addEventListener('change', reapplyAllTooltips);
 
-  // извлечь номер дома из адреса
   function extractHouse(address){
     const s = String(address||'').replace(/["“”]/g,'').trim();
-    const m = s.match(/,\s*([^,]+)\s*$/); // всё после последней запятой
+    const m = s.match(/,\s*([^,]+)\s*$/);
     if(m) return m[1].replace(/^(дом|д\.)\s*/i,'').trim();
     const m2 = s.match(/(\d+[0-9A-Za-zА-Яа-я\/\-]*?)\s*$/);
     return (m2 ? m2[1] : s);
   }
 
-  function createHouseMarker(item){
-    const color = colorByCompany(item.company||'');
-    const html = `<span class="hl" style="--hl-color:${color}">${escapeHtml(extractHouse(item.address))}</span>`;
-    const icon = L.divIcon({ className:'house-label', html, iconSize: null });
-    const marker = L.marker([item.lat, item.lon], { icon, interactive:false, keyboard:false }).addTo(map);
-    marker._company = item.company || '';
-    state.numberMarkers.push(marker);
+  function latLngWithPixelOffset(baseLatLng, dx, dy){
+    const p = map.latLngToLayerPoint(baseLatLng);
+    return map.layerPointToLatLng(L.point(p.x + dx, p.y + dy));
+    // (dx,dy) в пикселях относительно экрана
   }
 
-  function refreshHouseLabels(){
-    state.numberMarkers.forEach(m => map.removeLayer(m));
-    state.numberMarkers = [];
-    if(!$('#chkHnums').checked) return;
-    state.items.forEach(it => { if(it.lat!=null && it.lon!=null) createHouseMarker(it); });
+  function rectsIntersect(a,b){ return !(a.right < b.left || a.left > b.right || a.bottom < b.top || a.top > b.bottom); }
+
+  function placeHouseLabel(baseLatLng, text, company){
+    const color = colorByCompany(company||'');
+    const html = `<span class="hl" style="--hl-color:${color}">${escapeHtml(text)}</span>`;
+    const icon = L.divIcon({ className:'house-label', html, iconSize: null });
+
+    // Кандидаты смещений (пиксели): по кольцам радиусов и 8 направлений
+    const radii = [22, 30, 38, 48, 60];
+    const dirs  = [[1,0],[0,1],[-1,0],[0,-1],[1,1],[-1,1],[-1,-1],[1,-1]];
+    const used = []; // DOMRect уже занятых меток
+
+    // собрать уже занятые прямоугольники на экране
+    for(const obj of state.numberLabels){
+      if(obj.marker && obj.marker._icon){
+        used.push(obj.marker._icon.getBoundingClientRect());
+      }
+    }
+
+    let placedMarker=null, chosenLatLng=null, chosenRect=null, chosenOffset=[0,0];
+    for(const R of radii){
+      for(const [sx,sy] of dirs){
+        const dx = Math.round(R*sx), dy = Math.round(R*sy);
+        const cand = latLngWithPixelOffset(baseLatLng, dx, dy);
+        const mk = L.marker(cand, { icon, interactive:false, keyboard:false }).addTo(map);
+        // измеряем
+        const rect = mk._icon.getBoundingClientRect();
+        const pad = 2;
+        const grown = {left:rect.left-pad, top:rect.top-pad, right:rect.right+pad, bottom:rect.bottom+pad};
+        if(!used.some(r=>rectsIntersect(grown, r))){
+          placedMarker = mk; chosenLatLng = cand; chosenRect=grown; chosenOffset=[dx,dy];
+          break;
+        } else {
+          map.removeLayer(mk);
+        }
+      }
+      if(placedMarker) break;
+    }
+    // если вообще не нашли свободное — поставим хотя бы с первым смещением
+    if(!placedMarker){
+      const cand = latLngWithPixelOffset(baseLatLng, 22, -22);
+      placedMarker = L.marker(cand, { icon, interactive:false, keyboard:false }).addTo(map);
+      chosenLatLng = cand; chosenRect = placedMarker._icon.getBoundingClientRect(); chosenOffset=[22,-22];
+    }
+
+    // «палочка» от центра до метки
+    const colorLine = color;
+    const line = L.polyline([baseLatLng, chosenLatLng], { color: colorLine, weight: 1.5, opacity: 0.9 }).addTo(map);
+
+    placedMarker._company = company || '';
+    const entry = { marker: placedMarker, line, base: baseLatLng, company: company||'', offset: chosenOffset };
+    state.numberLabels.push(entry);
   }
-  $('#chkHnums').addEventListener('change', refreshHouseLabels);
+
+  function rebuildHouseLabels(){
+    // удалить предыдущие
+    state.numberLabels.forEach(obj=>{ if(obj.marker) map.removeLayer(obj.marker); if(obj.line) map.removeLayer(obj.line); });
+    state.numberLabels = [];
+    if(!$('#chkHnums').checked) return;
+    // ставим заново с антистолкновением
+    state.items.forEach(it => { if(it.lat!=null && it.lon!=null){ placeHouseLabel([it.lat,it.lon], extractHouse(it.address), it.company||''); } });
+  }
+
+  function recolorLinesOnMove(){
+    // при перемещении/зуме нужно перерисовать линии и метки с учётом новых экранных координат
+    if(!$('#chkHnums').checked) return;
+    // перестраиваем полностью (быстро и надёжно)
+    rebuildHouseLabels();
+  }
+
+  $('#chkHnums').addEventListener('change', rebuildHouseLabels);
+  map.on('zoomend moveend', recolorLinesOnMove);
 
   function popupHtml({company, address, color, lat, lon}){
     const coord = (lat!=null&&lon!=null) ? `<div class='muted' style="margin-top:6px">${lat.toFixed(6)}, ${lon.toFixed(6)}</div>` : '';
-    return `
-      <div style="font-weight:700; margin-bottom:4px;">
+    return `<div style="font-weight:700; margin-bottom:4px;">
         <span class="pill" style="border:1px solid ${color};">${escapeHtml(company||'(без компании)')}</span>
       </div>
-      <div>${escapeHtml(address)}</div>
-      ${coord}
-    `;
+      <div>${escapeHtml(address)}</div>${coord}`;
   }
 
   // ===== Построение =====
@@ -519,7 +544,6 @@
         }
 
         let latlng = null;
-
         if(res.polygon){
           const ringLatLng = res.polygon.map(([lon,lat])=>[lat,lon]);
           const poly = L.polygon(ringLatLng, { color: color, weight: 2, fillColor: color, fillOpacity: 0.9 }).addTo(map);
@@ -530,12 +554,10 @@
           applyTooltip(poly, label);
           poly.bindPopup(popupHtml({company:item.company,address:item.address,color,lat:latlng.lat||latlng[0],lon:latlng.lng||latlng[1]}));
           state.labelEntries.push({layer: poly, label});
-
         } else if(res.point){
           const [lon, lat] = res.point;
           let ring = null;
           try { ring = await fetchBuildingPolygon({ lon, lat }); } catch(e){ console.warn('Overpass fail', e); }
-
           if (ring && ring.length >= 4) {
             const poly = L.polygon(ring, { color: color, weight: 2, fillColor: color, fillOpacity: 0.9 }).addTo(map);
             poly._company = item.company || '';
@@ -579,7 +601,7 @@
     }
     rebuildLegend();
     if(state.bounds.isValid()) map.fitBounds(state.bounds.pad(0.2));
-    refreshHouseLabels(); // <<< строим/перестраиваем метки номеров
+    rebuildHouseLabels(); // строим метки номеров с «палочками»
   }
 
   // ===== Обработчики =====
