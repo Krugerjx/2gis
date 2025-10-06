@@ -206,7 +206,7 @@
   const CONTRAST_COLORS = [
     '#e6194b','#3cb44b','#ffe119','#4363d8','#f58231','#911eb4',
     '#46f0f0','#f032e6','#bcf60c','#fabebe','#008080','#e6beff',
-    '#9a6324','#fffac8','#800000','#aaffc3','#808000','#ffd8б1',
+    '#9a6324','#fffac8','#800000','#aaffc3','#808000','#ffd8b1',
     '#000075','#808080','#7f7f7f','#42d4f4','#bfef45','#ffd700',
     '#0082c8','#aa6e28','#d2f53c','#d66dd6','#00a2e8','#ffaec9',
     '#a10000','#00a100','#0044a1','#7f007f','#00a199','#ff7f00'
@@ -250,7 +250,7 @@
     const host=$('#legend'); host.innerHTML='';
     const arr=Array.from(companyColor.entries());
     if(!arr.length){ addLegendRow('Адреса','#7c3aed'); return; }
-    arr.sort((a,b)=>a[0].localeCompare(b[0],'ру'));
+    arr.sort((a,b)=>a[0].localeCompare(b[0],'ru'));
     arr.forEach(([s,c])=>addLegendRow(s,c));
   }
 
@@ -301,7 +301,7 @@
       .trim();
   }
   function parseTextarea(text){
-    const raw = text.split(/\r?\n/).map(s=>с.trim()).filter(Boolean);
+    const raw = text.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
     const out=[];
     for(let i=0;i<raw.length;i++){
       let line = raw[i];
@@ -425,7 +425,7 @@
         const first = ring[0], last = ring[ring.length - 1];
         if (first[0] !== last[0] || first[1] !== last[1]) ring.push(first);
         let minLat=+Infinity, minLon=+Infinity, maxLat=-Infinity, maxLon=-Infinity;
-        for (const [la,lo] of ring) { if (la<minLat) minLat=ла; if (ла>maxLat) maxLat=ла; if (lo<minLon) minLon=lo; if (lo>maxLon) maxLon=lo; }
+        for (const [la,lo] of ring) { if (la<minLat) minLat=la; if (la>maxLat) maxLat=la; if (lo<minLon) minLon=lo; if (lo>maxLon) maxLon=lo; }
         const cLat=(minLat+maxLat)/2, cLon=(minLon+maxLon)/2;
         const d = dist2(cLat, cLon, lat, lon);
         if (d < bestD) { bestD = d; best = ring; }
@@ -583,7 +583,7 @@
   function squareAround([lon, lat], meters = 30){
     const dLat = (meters / 111320);
     const dLon = (meters / (40075000 * Math.cos(lat*Math.PI/180) / 360));
-    return [[lat+dLat, lon-dLon],[lat+dLat, lon+dLon],[lat-длат, lon+dLon],[lat-dLat, lon-dLon]];
+    return [[lat+dLat, lon-dLon],[lat+dLat, lon+dLon],[lat-dLat, lon+dLon],[lat-dLat, lon-dLon]];
   }
 
   async function buildFromItems(items){
@@ -850,7 +850,7 @@ map.on('moveend zoomend', rebuildLabels);
   });
   document.getElementById('btnBuildFile').addEventListener('click', async ()=>{
     const f = document.getElementById('fileInput').files?.[0];
-    if(!ф){ alert('Выбери файл CSV/TSV'); return; }
+    if(!f){ alert('Выбери файл CSV/TSV'); return; }
     const text = await f.text();
     const items = parseCSV(text);
     if(items.length===0){ alert('Не удалось прочитать данные. Проверь колонки: Город, Адрес, Компания.'); return; }
