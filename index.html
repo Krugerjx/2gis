@@ -19,11 +19,31 @@
     .row input, .row button, textarea { font-size: 14px; }
     textarea { width: 100%; min-height: 120px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas; }
     .legend { display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; font-size: 13px; }
-    .swatch { width: 18px; height: 18px; border-radius: 4px; border: 1px solid rgba(0,0,0,.15); }
+    .swatch { width: 18px; height: 18px; border-radius: 4px; border: 1px solid rgba(0,0,0,.15); cursor: pointer; }
     .item { padding: 8px 10px; border-radius: 10px; border: 1px dashed #ddd; margin-bottom: 6px; cursor: pointer; }
     .muted { color: #666; font-size: 13px; }
     .pill { padding: 2px 6px; border-radius: 999px; font-size: 12px; background: #f1f5f9; border: 1px solid #e5e7eb; }
     .hint { font-size: 12px; color:#475569; }
+
+    /* Палитра выбора цвета */
+    .color-picker {
+      position: absolute;
+      display: none;
+      background: #fff;
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      padding: 8px;
+      box-shadow: 0 10px 24px rgba(0,0,0,.15);
+      z-index: 9999;
+      grid-template-columns: repeat(10, 22px);
+      gap: 6px;
+    }
+    .color-cell {
+      width: 22px; height: 22px;
+      border-radius: 6px;
+      border: 1px solid rgba(0,0,0,.2);
+      cursor: pointer;
+    }
   </style>
 </head>
 <body>
@@ -77,6 +97,9 @@
   <div id="map"></div>
 </div>
 
+<!-- Палитра (портал) -->
+<div id="colorPicker" class="color-picker" role="dialog" aria-hidden="true"></div>
+
 <script>
 (function(){
   // ===== Карта =====
@@ -84,12 +107,13 @@
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 20, attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
 
   const $ = (s)=>document.querySelector(s);
-  const state = { layers: [], labelEntries: [], bounds: L.latLngBounds() };
+  const state = { layers: [], labelEntries: [], bounds: L.latLngBounds(), items: [] };
 
   function clearAll(){
     state.layers.forEach(l => map.removeLayer(l));
     state.layers = [];
     state.labelEntries = [];
+    state.items = [];
     state.bounds = L.latLngBounds();
     $('#list').innerHTML = '';
   }
@@ -100,24 +124,73 @@
     el.innerHTML=`<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;">
       <div style="font-weight:600">${escapeHtml(item.address)}</div>
       ${item.company?`<span class='pill' style='border:1px solid ${item.color||'#ddd'}'>${escapeHtml(item.company)}</span>`:''}
-    </div><div class='muted'>${item.lat&&item.lon?`${item.lat.toFixed(6)}, ${item.lon.toFixed(6)}`:'—'}</div>`;
-    el.addEventListener('click',()=>{ if(item.lat&&item.lon){ map.setView([item.lat,item.lon], 17); } });
+    </div><div class='muted'>${item.lat!=null&&item.lon!=null?`${Number(item.lat).toFixed(6)}, ${Number(item.lon).toFixed(6)}`:'—'}</div>`;
+    el.addEventListener('click',()=>{ if(item.lat!=null&&item.lon!=null){ map.setView([item.lat,item.lon], 17); } });
     $('#list').appendChild(el);
+  }
+  function rerenderList(){
+    $('#list').innerHTML='';
+    for(const it of state.items){
+      const color = colorByCompany(it.company||'');
+      addListItem({...it, color});
+    }
   }
   function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
   // ===== Цвета по компаниям / легенда =====
   const companyColor = new Map();
+
+  // Контрастная палитра (подбор ярких, различимых цветов)
+  const CONTRAST_COLORS = [
+    '#e6194b','#3cb44b','#ffe119','#4363d8','#f58231','#911eb4',
+    '#46f0f0','#f032e6','#bcf60c','#fabebe','#008080','#e6beff',
+    '#9a6324','#fffac8','#800000','#aaffc3','#808000','#ffd8b1',
+    '#000075','#808080','#7f7f7f','#42d4f4','#bfef45','#ffd700',
+    '#0082c8','#aa6e28','#d2f53c','#d66dd6','#00a2e8','#ffaec9',
+    '#a10000','#00a100','#0044a1','#7f007f','#00a199','#ff7f00'
+  ];
+
   function hash(str){ let h=0; for(let i=0;i<str.length;i++){ h=((h<<5)-h)+str.charCodeAt(i); h|=0; } return h; }
+
+  // По умолчанию — стабильная раскраска из контрастной палитры по хэшу
   function colorByCompany(company){
     if(!company) return '#7c3aed';
     if(companyColor.has(company)) return companyColor.get(company);
-    const h=Math.abs(hash(company))%360;
-    const c=`hsl(${h} 85% 45%)`;
+    const idx = Math.abs(hash(company)) % CONTRAST_COLORS.length;
+    const c = CONTRAST_COLORS[idx];
     companyColor.set(company,c);
     return c;
   }
-  function addLegendRow(s,c){ const host=$('#legend'); const t=document.createElement('div'); t.textContent=s||'(без компании)'; const sw=document.createElement('div'); sw.className='swatch'; sw.style.background=c||'#7c3aed'; host.appendChild(t); host.appendChild(sw); }
+
+  // Принудительно задать цвет компании и перекрасить слои
+  function setCompanyColor(company, color){
+    companyColor.set(company, color);
+    recolorCompanyLayers(company, color);
+    rebuildLegend();
+    rerenderList();
+  }
+
+  function recolorCompanyLayers(company, color){
+    for(const layer of state.layers){
+      if(layer && layer._company === company && typeof layer.setStyle === 'function'){
+        layer.setStyle({ color: color, fillColor: color });
+      }
+    }
+  }
+
+  function addLegendRow(s,c){
+    const host=$('#legend');
+    const t=document.createElement('div'); t.textContent=s||'(без компании)';
+    const sw=document.createElement('div');
+    sw.className='swatch swatch-click';
+    sw.style.background=c||'#7c3aed';
+    if (s && companyColor.has(s)) {
+      sw.title = 'Изменить цвет';
+      sw.addEventListener('click', (ev)=> openColorPickerFor(s, ev.currentTarget));
+    }
+    host.appendChild(t); host.appendChild(sw);
+  }
+
   function rebuildLegend(){
     const host=$('#legend'); host.innerHTML='';
     const arr=Array.from(companyColor.entries());
@@ -125,6 +198,44 @@
     arr.sort((a,b)=>a[0].localeCompare(b[0],'ru'));
     arr.forEach(([s,c])=>addLegendRow(s,c));
   }
+
+  // ===== Палитра выбора цвета (UI) =====
+  const pickerEl = document.getElementById('colorPicker');
+  let pickerCompany = null;
+
+  // заполняем палитру один раз
+  (function fillPalette(){
+    pickerEl.style.display='grid'; // временно показать для сетки
+    pickerEl.innerHTML='';
+    CONTRAST_COLORS.forEach(col=>{
+      const cell=document.createElement('div');
+      cell.className='color-cell';
+      cell.style.background=col;
+      cell.addEventListener('click', ()=>{ if(pickerCompany){ setCompanyColor(pickerCompany, col); hidePicker(); }});
+      pickerEl.appendChild(cell);
+    });
+    pickerEl.style.display='none';
+  })();
+
+  function openColorPickerFor(company, anchor){
+    pickerCompany = company;
+    const r = anchor.getBoundingClientRect();
+    pickerEl.style.left = Math.min(window.scrollX + r.left, window.scrollX + window.innerWidth - 250) + 'px';
+    pickerEl.style.top  = (window.scrollY + r.bottom + 8) + 'px';
+    pickerEl.style.display = 'grid';
+    pickerEl.setAttribute('aria-hidden','false');
+  }
+  function hidePicker(){
+    pickerEl.style.display='none';
+    pickerEl.setAttribute('aria-hidden','true');
+    pickerCompany = null;
+  }
+  document.addEventListener('click',(e)=>{
+    if(pickerEl.style.display==='none') return;
+    const withinPicker = pickerEl.contains(e.target);
+    const onSwatch = e.target.classList && e.target.classList.contains('swatch-click');
+    if(!withinPicker && !onSwatch) hidePicker();
+  });
 
   // ===== Парсеры =====
   // 1) Ручной ввод: поддержка табов и 6-колоночного
@@ -308,7 +419,7 @@
   $('#chkLabels').addEventListener('change', reapplyAllTooltips);
 
   function popupHtml({company, address, color, lat, lon}){
-    const coord = (lat&&lon) ? `<div class='muted' style="margin-top:6px">${lat.toFixed(6)}, ${lon.toFixed(6)}</div>` : '';
+    const coord = (lat!=null&&lon!=null) ? `<div class='muted' style="margin-top:6px">${lat.toFixed(6)}, ${lon.toFixed(6)}</div>` : '';
     return `
       <div style="font-weight:700; margin-bottom:4px;">
         <span class="pill" style="border:1px solid ${color};">${escapeHtml(company||'(без компании)')}</span>
@@ -325,14 +436,19 @@
       const color = colorByCompany(item.company||'');
       try{
         const res = await geocode(item.address);
-        if(!res){ addListItem({...item, color}); continue; }
+        if(!res){
+          state.items.push({address:item.address, company:item.company||'', lat:null, lon:null});
+          addListItem({...item, color});
+          continue;
+        }
 
         let latlng = null;
 
         if(res.polygon){
           const ringLatLng = res.polygon.map(([lon,lat])=>[lat,lon]);
-          // ← полностью закрашенный полигон
+          // плотно закрашенный полигон
           const poly = L.polygon(ringLatLng, { color: color, weight: 2, fillColor: color, fillOpacity: 0.9 }).addTo(map);
+          poly._company = item.company || '';
           state.layers.push(poly);
           latlng = poly.getBounds().getCenter();
           const label = item.company || '';
@@ -346,8 +462,8 @@
           try { ring = await fetchBuildingPolygon({ lon, lat }); } catch(e){ console.warn('Overpass fail', e); }
 
           if (ring && ring.length >= 4) {
-            // ← полностью закрашенный полигон по контуру OSM
             const poly = L.polygon(ring, { color: color, weight: 2, fillColor: color, fillOpacity: 0.9 }).addTo(map);
+            poly._company = item.company || '';
             state.layers.push(poly);
             latlng = poly.getBounds().getCenter();
             const label = item.company || '';
@@ -355,10 +471,11 @@
             poly.bindPopup(popupHtml({company:item.company,address:item.address,color,lat:latlng.lat||latlng[0],lon:latlng.lng||latlng[1]}));
             state.labelEntries.push({layer: poly, label});
           } else {
-            // ← fallback квадрат тоже плотно закрашен
             const sq = squareAround([lon,lat], 30).map(([la,lo])=>[la,lo]);
             const poly = L.polygon(sq, { color: color, weight: 2, fillColor: color, fillOpacity: 0.9 }).addTo(map);
+            poly._company = item.company || '';
             const dot  = L.circleMarker([lat,lon], { radius: 4, color: '#fff', weight: 2, fillColor: color, fillOpacity: 1 }).addTo(map);
+            dot._company = item.company || '';
             state.layers.push(poly, dot);
             latlng = [lat,lon];
             const label = item.company || '';
@@ -369,14 +486,19 @@
         }
 
         if(latlng){
-          item.lat = latlng.lat!==undefined ? latlng.lat : latlng[0];
-          item.lon = latlng.lng!==undefined ? latlng.lng : latlng[1];
-          state.bounds.extend([item.lat, item.lon]);
+          const lat = latlng.lat!==undefined ? latlng.lat : latlng[0];
+          const lon = latlng.lng!==undefined ? latlng.lng : latlng[1];
+          item.lat = lat; item.lon = lon;
+          state.bounds.extend([lat, lon]);
+          state.items.push({address:item.address, company:item.company||'', lat, lon});
+        } else {
+          state.items.push({address:item.address, company:item.company||'', lat:null, lon:null});
         }
         addListItem({...item, color});
         await new Promise(r=>setTimeout(r,160));
       }catch(e){
         console.warn('Ошибка геокодинга', item.address, e);
+        state.items.push({address:item.address, company:item.company||'', lat:null, lon:null});
         addListItem({...item, color});
       }
     }
@@ -399,16 +521,14 @@
   });
   document.getElementById('btnClear').addEventListener('click', ()=>{
     document.getElementById('addrInput').value='';
-    clearAll(); companyColor.clear(); rebuildLegend();
+    clearAll(); companyColor.clear(); rebuildLegend(); hidePicker();
   });
   document.getElementById('btnFit').addEventListener('click', ()=>{
     if(state.bounds.isValid()) map.fitBounds(state.bounds.pad(0.2));
   });
 
-  // демо-вставка
+  // демо-вставка — один правильный пример (Рахова)
   document.getElementById('addrInput').value = [
-    'г. Саратов, "улица 1-я Беговая, 13"\tООО Бета',
-    'г. Саратов, "улица 1-й Кавказский, 10"\tООО Бета',
     'г. Саратов, "улица Рахова, 169/171"\tООО Альфа'
   ].join('\n');
 })();
