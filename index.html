@@ -75,6 +75,8 @@
       </div>
       <textarea id="addrInput" placeholder="Форматы:
 • г. Саратов, улица Рахова, 169/171[TAB]ООО Альфа
+• г. Саратов, улица Рахова, 169/171 ↵
+  ООО Альфа (на следующей строке)
 • Город, Адрес[TAB]Компания
 • Старый 6-колоночный: ID ID2 Город Улица Дом Подъезд"></textarea>
       <div class="row" style="margin-top:8px;">
@@ -135,12 +137,11 @@
       addListItem({...it, color});
     }
   }
-  function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39'}[c])); }
 
   // ===== Цвета по компаниям / легенда =====
   const companyColor = new Map();
 
-  // Контрастная палитра (подбор ярких, различимых цветов)
   const CONTRAST_COLORS = [
     '#e6194b','#3cb44b','#ffe119','#4363d8','#f58231','#911eb4',
     '#46f0f0','#f032e6','#bcf60c','#fabebe','#008080','#e6beff',
@@ -152,7 +153,6 @@
 
   function hash(str){ let h=0; for(let i=0;i<str.length;i++){ h=((h<<5)-h)+str.charCodeAt(i); h|=0; } return h; }
 
-  // По умолчанию — стабильная раскраска из контрастной палитры по хэшу
   function colorByCompany(company){
     if(!company) return '#7c3aed';
     if(companyColor.has(company)) return companyColor.get(company);
@@ -162,7 +162,6 @@
     return c;
   }
 
-  // Принудительно задать цвет компании и перекрасить слои
   function setCompanyColor(company, color){
     companyColor.set(company, color);
     recolorCompanyLayers(company, color);
@@ -203,9 +202,8 @@
   const pickerEl = document.getElementById('colorPicker');
   let pickerCompany = null;
 
-  // заполняем палитру один раз
   (function fillPalette(){
-    pickerEl.style.display='grid'; // временно показать для сетки
+    pickerEl.style.display='grid';
     pickerEl.innerHTML='';
     CONTRAST_COLORS.forEach(col=>{
       const cell=document.createElement('div');
@@ -238,21 +236,56 @@
   });
 
   // ===== Парсеры =====
-  // 1) Ручной ввод: поддержка табов и 6-колоночного
+  // помощники: распознать "строку компании" и нормализовать опечатку 000→ООО
+  function isCompanyLine(s){
+    const t = s.trim();
+    return /^((ООО|ОАО|ПАО|ЗАО|АО|ИП|ТОО|OOO|LLC|LTD|GMBH|GmbH)|[0OО]{3})\b/i.test(t);
+  }
+  function normalizeCompany(s){
+    return s.trim()
+      .replace(/^[0OО]{3}\s+/i,'ООО ')
+      .replace(/\s+/g,' ')
+      .trim();
+  }
+
+  // 1) Ручной ввод: теперь понимает два варианта:
+  //    a) "Адрес<TAB>Компания"
+  //    b) "Адрес"   (следующая строка)   "Компания"
   function parseTextarea(text){
-    const lines=text.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+    const raw = text.split(/\r?\n/).map(s=>s.replace(/^\s+|\s+$/g,'')).filter(Boolean);
     const out=[];
-    for(const line of lines){
+    for(let i=0;i<raw.length;i++){
+      const line = raw[i];
+
+      // 6-колоночный формат
       const m6=/^(\S+)\s+(\S+)\s+(\S+)\s+(.+?)\s+(\S+)\s+(\S+)$/.exec(line);
-      if(m6){ const city=m6[3], street=m6[4], house=m6[5]; out.push({ address:`${city}, ${street} ${house}`, company:'' }); continue; }
-      const tab=line.split(/\t/);
-      if(tab.length>=2){ out.push({ address:tab[0].trim(), company:tab[1].trim() }); continue; }
+      if(m6){
+        const city=m6[3], street=m6[4], house=m6[5];
+        out.push({ address:`${city}, ${street} ${house}`, company:'' });
+        continue;
+      }
+
+      // TAB: адрес\tкомпания
+      const tab = line.split(/\t/);
+      if(tab.length>=2){
+        out.push({ address:tab[0].trim(), company: normalizeCompany(tab.slice(1).join('\t')) });
+        continue;
+      }
+
+      // 2-строчный ввод: текущая строка — адрес, следующая — компания
+      if(i+1 < raw.length && isCompanyLine(raw[i+1])){
+        out.push({ address: line, company: normalizeCompany(raw[i+1]) });
+        i++; // пропустить строку компании
+        continue;
+      }
+
+      // иначе — адрес без компании
       out.push({ address: line, company: '' });
     }
     return out;
   }
 
-  // 2) Файл: надёжный CSV/TSV парсер c кавычками
+  // 2) Файл: CSV/TSV (оставил как было)
   function stripBOM(s){ return s.replace(/^\uFEFF/, ''); }
   function smartSplit(line, delim){
     const out=[], d = delim, n = line.length;
@@ -300,7 +333,7 @@
       const addr = idxAddr>=0 ? cols[idxAddr] : '';
       const comp = idxCompany>=0 ? cols[idxCompany] : '';
       const full = city ? `${city}, ${addr}` : addr;
-      if(full) out.push({ address: full, company: comp });
+      if(full) out.push({ address: full, company: normalizeCompany(comp) });
     }
     return out;
   }
@@ -446,7 +479,6 @@
 
         if(res.polygon){
           const ringLatLng = res.polygon.map(([lon,lat])=>[lat,lon]);
-          // плотно закрашенный полигон
           const poly = L.polygon(ringLatLng, { color: color, weight: 2, fillColor: color, fillOpacity: 0.9 }).addTo(map);
           poly._company = item.company || '';
           state.layers.push(poly);
@@ -529,8 +561,10 @@
 
   // демо-вставка — один правильный пример (Рахова)
   document.getElementById('addrInput').value = [
-    'г. Саратов, "улица Рахова, 169/171"\tООО Альфа'
-  ].join('\n');
+    'г. Саратов, "улица Рахова, 169/171"',
+    'ООО Альфа'
+  ].join('\n'); // можно и адрес<TAB>ООО Альфа
+
 })();
 </script>
 </body>
