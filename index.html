@@ -11,7 +11,7 @@
 
   <style>
     html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
-    #app { display: grid; grid-template-columns: 380px 1fr; height: 100%; }
+    #app { display: grid; grid-template-columns: 400px 1fr; height: 100%; }
     #sidebar { padding: 14px; border-right: 1px solid #eee; overflow: auto; }
     #map { width: 100%; height: 100%; }
     .panel { background: #fafafa; border: 1px solid #eaeaea; border-radius: 12px; padding: 12px; margin-bottom: 12px; }
@@ -45,7 +45,7 @@
       cursor: pointer;
     }
 
-    /* Метки номеров домов — компактные, без «палочек» */
+    /* Номера домов — компактные, «прижаты» к контуру */
     .house-label {
       background: transparent;
       border: none;
@@ -55,9 +55,9 @@
     .house-label .hl {
       display: inline-block;
       padding: 0 3px;
-      font-size: 9px;             /* было 10px → стало чуть меньше */
+      font-size: 9px;
       font-weight: 700;
-      background: rgba(255,255,255,.95);
+      background: rgba(255,255,255,.96);
       border: 2px solid var(--hl-color, rgba(0,0,0,.25));
       border-radius: 6px;
       box-shadow: 0 1px 3px rgba(0,0,0,.10);
@@ -65,6 +65,9 @@
       white-space: nowrap;
       user-select: none;
     }
+
+    /* Выделение домов */
+    .tip { font-size: 12px; color:#64748b; }
   </style>
 </head>
 <body>
@@ -72,7 +75,7 @@
   <div id="sidebar">
     <div class="panel">
       <div style="font-weight:700;">Карта монтажа — Leaflet/OSM</div>
-      <div class="muted">Загрузи CSV/TSV или вставь вручную. Цвета — по компаниям. Подписи можно включить чекбоксом.</div>
+      <div class="muted">Загрузи CSV/TSV или вставь вручную. Цвета — по компаниям. Подписи/номера — чекбоксами.</div>
     </div>
 
     <div class="panel">
@@ -114,6 +117,22 @@
     </div>
 
     <div class="panel">
+      <div style="font-weight:600; margin-bottom:6px;">Выбор домов</div>
+      <label class="row" style="gap:6px; margin-bottom:6px;">
+        <input type="checkbox" id="chkSelectMode" />
+        Режим выбора домов
+      </label>
+      <div class="row" style="margin-bottom:8px;">
+        <button id="btnSelectBox">Выделить прямоугольником</button>
+        <button id="btnClearSel">Сбросить выделение</button>
+      </div>
+      <div class="row">
+        <button id="btnGenerate">Сгенерировать наряд</button>
+      </div>
+      <div class="tip" style="margin-top:6px;">Подсказка: в режиме выбора можно <b>кликать</b> по дому для (де)выделения. Или удерживай <b>Shift</b> и веди мышью — прямоугольник выделит дома, пересекающие его.</div>
+    </div>
+
+    <div class="panel">
       <div style="font-weight:600; margin-bottom:6px;">Легенда компаний</div>
       <div id="legend" class="legend"></div>
     </div>
@@ -136,19 +155,17 @@
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 20, attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
 
   const $ = (s)=>document.querySelector(s);
-  const state = { layers: [], labelEntries: [], bounds: L.latLngBounds(), items: [], numberMarkers: [] };
+  const state = {
+    layers: [],         // все геометрии (полигоны + квадраты)
+    labelEntries: [],   // тултипы компаний
+    numberMarkers: [],  // метки номеров домов
+    items: [],          // список в сайдбаре
+    bounds: L.latLngBounds(),
+    selected: new Set(),// выделенные слои
+  };
 
-  function clearAll(){
-    state.layers.forEach(l => map.removeLayer(l));
-    state.numberMarkers.forEach(m => map.removeLayer(m));
-    state.layers = [];
-    state.numberMarkers = [];
-    state.labelEntries = [];
-    state.items = [];
-    state.bounds = L.latLngBounds();
-    $('#list').innerHTML = '';
-  }
-
+  // ===== Утилиты =====
+  function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   function addListItem(item){
     const el=document.createElement('div');
     el.className='item';
@@ -166,7 +183,17 @@
       addListItem({...it, color});
     }
   }
-  function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function clearAll(){
+    state.layers.forEach(l => map.removeLayer(l));
+    state.numberMarkers.forEach(m => map.removeLayer(m));
+    state.labelEntries = [];
+    state.numberMarkers = [];
+    state.layers = [];
+    state.items = [];
+    state.bounds = L.latLngBounds();
+    state.selected.clear();
+    $('#list').innerHTML = '';
+  }
 
   // ===== Цвета по компаниям / легенда =====
   const companyColor = new Map();
@@ -189,23 +216,15 @@
   }
   function setCompanyColor(company, color){
     companyColor.set(company, color);
-    recolorCompanyLayers(company, color);
-    recolorHouseLabels(company, color);
+    recolorLayers(company, color);
     rebuildLegend();
     rerenderList();
+    rebuildHouseLabels(); // метки рамки тоже перекрасим
   }
-  function recolorCompanyLayers(company, color){
+  function recolorLayers(company, color){
     for(const layer of state.layers){
       if(layer && layer._company === company && typeof layer.setStyle === 'function'){
-        layer.setStyle({ color: color, fillColor: color });
-      }
-    }
-  }
-  function recolorHouseLabels(company, color){
-    for(const m of state.numberMarkers){
-      if(m && m._company === company && m._icon){
-        const span = m._icon.querySelector('.hl');
-        if(span) span.style.setProperty('--hl-color', color);
+        layer.setStyle({ color, fillColor: color });
       }
     }
   }
@@ -264,7 +283,7 @@
     if(!withinPicker && !onSwatch) hidePicker();
   });
 
-  // ===== Парсеры =====
+  // ===== Парсеры ввода =====
   function isCompanyLine(s){
     const t = String(s||'').trim();
     return /^((ООО|ОАО|ПАО|ЗАО|АО|ИП|ТОО|OOO|LLC|LTD|GMBH|GmbH)|[0OО]{3})\b/i.test(t);
@@ -409,13 +428,7 @@
     return best || null;
   }
 
-  // ===== Геометрия и размещение номеров (без «палочек») =====
-  function squareAround([lon, lat], meters = 30){
-    const dLat = (meters / 111320);
-    const dLon = (meters / (40075000 * Math.cos(lat*Math.PI/180) / 360));
-    return [[lat+dLat, lon-dLon],[lat+dLat, lon+dLon],[lat-dLat, lon+dLon],[lat-dLat, lon-dLon]];
-  }
-
+  // ===== Подписи компаний =====
   function applyTooltip(layer, label){
     const permanent = $('#chkLabels').checked;
     if (layer._tooltip) layer.unbindTooltip();
@@ -432,6 +445,7 @@
   }
   $('#chkLabels').addEventListener('change', reapplyAllTooltips);
 
+  // ===== Номера домов: «прижать» к контуру + антистолкновение =====
   function extractHouse(address){
     const s = String(address||'').replace(/["“”]/g,'').trim();
     const m = s.match(/,\s*([^,]+)\s*$/);
@@ -439,42 +453,51 @@
     const m2 = s.match(/(\d+[0-9A-Za-zА-Яа-я\/\-]*?)\s*$/);
     return (m2 ? m2[1] : s);
   }
-
   function latLngWithPixelOffset(baseLatLng, dx, dy){
     const p = map.latLngToLayerPoint(baseLatLng);
     return map.layerPointToLatLng(L.point(p.x + dx, p.y + dy));
   }
   function rectsIntersect(a,b){ return !(a.right < b.left || a.left > b.right || a.bottom < b.top || a.top > b.bottom); }
 
-  function placeHouseLabel(baseLatLng, text, company){
-    const color = colorByCompany(company||'');
-    const html = `<span class="hl" style="--hl-color:${color}">${escapeHtml(text)}</span>`;
-    const icon = L.divIcon({ className:'house-label', html, iconSize: null });
+  function placeLabelAtBuilding(layer){
+    const addr = layer._address||'', company = layer._company||'';
+    const color = colorByCompany(company);
+    const text = extractHouse(addr);
 
-    // расставляем без «палочек»: ищем свободную позицию вокруг дома
-    const radii = [18, 24, 30, 38, 48]; // компактнее и ближе к дому
-    const dirs  = [[1,0],[0,1],[-1,0],[0,-1],[1,1],[-1,1],[-1,-1],[1,-1]];
-    const used = state.numberMarkers.map(m => m._icon?.getBoundingClientRect()).filter(Boolean);
+    // кандидаты: точки на границе bbox + небольшой вынос наружу (8–12px)
+    const b = layer.getBounds();
+    const midLat = (b.getNorth()+b.getSouth())/2;
+    const midLng = (b.getEast()+b.getWest())/2;
 
+    const candidates = [
+      {anchor: L.latLng(b.getNorth(), midLng), off:[0,-12]}, // север
+      {anchor: L.latLng(midLat, b.getEast()),  off:[+12,0]}, // восток
+      {anchor: L.latLng(midLat, b.getWest()),  off:[-12,0]}, // запад
+      {anchor: L.latLng(b.getSouth(), midLng), off:[0,+12]}, // юг
+    ];
+
+    const used = state.numberMarkers.map(m=>m._icon?.getBoundingClientRect()).filter(Boolean);
     let marker=null;
-    for(const R of radii){
-      let ok=false;
-      for(const [sx,sy] of dirs){
-        const cand = latLngWithPixelOffset(baseLatLng, Math.round(R*sx), Math.round(R*sy));
-        const mk = L.marker(cand, { icon, interactive:false, keyboard:false }).addTo(map);
-        const rect = mk._icon.getBoundingClientRect();
-        const grow = {left:rect.left-2, top:rect.top-2, right:rect.right+2, bottom:rect.bottom+2};
-        if(!used.some(r=>rectsIntersect(grow, r))){
-          marker = mk; ok=true; break;
-        }
-        map.removeLayer(mk);
-      }
-      if(ok) break;
+
+    for(const c of candidates){
+      const pos = latLngWithPixelOffset(c.anchor, c.off[0], c.off[1]);
+      const html = `<span class="hl" style="--hl-color:${color}">${escapeHtml(text)}</span>`;
+      const icon = L.divIcon({ className:'house-label', html, iconSize: null });
+      const mk = L.marker(pos, { icon, interactive:false, keyboard:false }).addTo(map);
+      const rect = mk._icon.getBoundingClientRect();
+      const grow = {left:rect.left-2, top:rect.top-2, right:rect.right+2, bottom:rect.bottom+2};
+      if(!used.some(r=>rectsIntersect(grow, r))){ marker = mk; break; }
+      map.removeLayer(mk);
     }
     if(!marker){
-      marker = L.marker(baseLatLng, { icon, interactive:false, keyboard:false }).addTo(map);
+      // резерв — чуть дальше по диагоналям
+      const c = L.latLng(b.getNorth(), b.getEast());
+      const pos = latLngWithPixelOffset(c, +14, -14);
+      const html = `<span class="hl" style="--hl-color:${color}">${escapeHtml(text)}</span>`;
+      const icon = L.divIcon({ className:'house-label', html, iconSize: null });
+      marker = L.marker(pos, { icon, interactive:false, keyboard:false }).addTo(map);
     }
-    marker._company = company || '';
+    marker._company = company;
     state.numberMarkers.push(marker);
   }
 
@@ -482,11 +505,57 @@
     state.numberMarkers.forEach(m => map.removeLayer(m));
     state.numberMarkers = [];
     if(!$('#chkHnums').checked) return;
-    state.items.forEach(it => { if(it.lat!=null && it.lon!=null) placeHouseLabel([it.lat,it.lon], extractHouse(it.address), it.company||''); });
+    state.layers.forEach(l => { if(l._address && l.getBounds) placeLabelAtBuilding(l); });
   }
   map.on('zoomend moveend', rebuildHouseLabels);
   $('#chkHnums').addEventListener('change', rebuildHouseLabels);
 
+  // ===== Выбор домов =====
+  function inSelectMode(){ return $('#chkSelectMode').checked; }
+
+  function applySelectedStyle(layer){
+    const base = colorByCompany(layer._company||'');
+    layer.setStyle({ fillColor: base, color: '#111', weight: 4, dashArray: '6 3' });
+  }
+  function applyBaseStyle(layer){
+    const base = colorByCompany(layer._company||'');
+    layer.setStyle({ fillColor: base, color: base, weight: 2, dashArray: null });
+  }
+  function toggleLayerSelection(layer){
+    if(!inSelectMode()) return;
+    if(state.selected.has(layer)){
+      state.selected.delete(layer);
+      applyBaseStyle(layer);
+    } else {
+      state.selected.add(layer);
+      applySelectedStyle(layer);
+    }
+  }
+  function clearSelection(){
+    for(const l of state.selected) applyBaseStyle(l);
+    state.selected.clear();
+  }
+  $('#chkSelectMode').addEventListener('change', ()=>{ /* визуально ничего, просто режим */ });
+  $('#btnClearSel').addEventListener('click', clearSelection);
+
+  // Прямоугольное выделение: используем встроенный boxZoom (Shift+drag)
+  map.on('boxzoomend', (e)=>{
+    if(!inSelectMode()) return;
+    const bounds = e.boxZoomBounds || e.bounds; // совместимость
+    if(!bounds) return;
+    for(const l of state.layers){
+      if(l.getBounds && bounds.intersects(l.getBounds())){
+        state.selected.add(l);
+        applySelectedStyle(l);
+      }
+    }
+  });
+  // Кнопка «Выделить прямоугольником»: просто подсказка — активируем boxZoom на один раз
+  document.getElementById('btnSelectBox').addEventListener('click', ()=>{
+    alert('Удерживай Shift и перетаскивай по карте — дома в прямоугольнике будут выделены.');
+  });
+
+  // ===== Попапы =====
   function popupHtml({company, address, color, lat, lon}){
     const coord = (lat!=null&&lon!=null) ? `<div class='muted' style="margin-top:6px">${lat.toFixed(6)}, ${lon.toFixed(6)}</div>` : '';
     return `<div style="font-weight:700; margin-bottom:4px;">
@@ -496,6 +565,12 @@
   }
 
   // ===== Построение =====
+  function squareAround([lon, lat], meters = 30){
+    const dLat = (meters / 111320);
+    const dLon = (meters / (40075000 * Math.cos(lat*Math.PI/180) / 360));
+    return [[lat+dLat, lon-dLon],[lat+dLat, lon+dLon],[lat-dLat, lon+dLon],[lat-dLat, lon-dLon]];
+  }
+
   async function buildFromItems(items){
     clearAll();
     for(const item of items){
@@ -508,43 +583,38 @@
           continue;
         }
 
-        let latlng = null;
+        let latlng = null, poly = null;
+
         if(res.polygon){
           const ringLatLng = res.polygon.map(([lon,lat])=>[lat,lon]);
-          const poly = L.polygon(ringLatLng, { color: color, weight: 2, fillColor: color, fillOpacity: 0.9 }).addTo(map);
-          poly._company = item.company || '';
-          state.layers.push(poly);
+          poly = L.polygon(ringLatLng, { color: color, weight: 2, fillColor: color, fillOpacity: 0.9 }).addTo(map);
           latlng = poly.getBounds().getCenter();
-          const label = item.company || '';
-          applyTooltip(poly, label);
-          poly.bindPopup(popupHtml({company:item.company,address:item.address,color,lat:latlng.lat||latlng[0],lon:latlng.lng||latlng[1]}));
-          state.labelEntries.push({layer: poly, label});
         } else if(res.point){
           const [lon, lat] = res.point;
           let ring = null;
           try { ring = await fetchBuildingPolygon({ lon, lat }); } catch(e){ console.warn('Overpass fail', e); }
           if (ring && ring.length >= 4) {
-            const poly = L.polygon(ring, { color: color, weight: 2, fillColor: color, fillOpacity: 0.9 }).addTo(map);
-            poly._company = item.company || '';
-            state.layers.push(poly);
+            poly = L.polygon(ring, { color: color, weight: 2, fillColor: color, fillOpacity: 0.9 }).addTo(map);
             latlng = poly.getBounds().getCenter();
-            const label = item.company || '';
-            applyTooltip(poly, label);
-            poly.bindPopup(popupHtml({company:item.company,address:item.address,color,lat:latlng.lat||latlng[0],lon:latlng.lng||latlng[1]}));
-            state.labelEntries.push({layer: poly, label});
           } else {
             const sq = squareAround([lon,lat], 30).map(([la,lo])=>[la,lo]);
-            const poly = L.polygon(sq, { color: color, weight: 2, fillColor: color, fillOpacity: 0.9 }).addTo(map);
-            poly._company = item.company || '';
+            poly = L.polygon(sq, { color: color, weight: 2, fillColor: color, fillOpacity: 0.9 }).addTo(map);
             const dot  = L.circleMarker([lat,lon], { radius: 4, color: '#fff', weight: 2, fillColor: color, fillOpacity: 1 }).addTo(map);
-            dot._company = item.company || '';
-            state.layers.push(poly, dot);
+            state.layers.push(dot);
             latlng = [lat,lon];
-            const label = item.company || '';
-            applyTooltip(poly, label);
-            poly.bindPopup(popupHtml({company:item.company,address:item.address,color,lat:latlng[0],lon:latlng[1]}));
-            state.labelEntries.push({layer: poly, label});
           }
+        }
+
+        if(poly){
+          poly._company = item.company || '';
+          poly._address = item.address || '';
+          poly.on('click', ()=> toggleLayerSelection(poly));
+          state.layers.push(poly);
+
+          const label = item.company || '';
+          applyTooltip(poly, label);
+          poly.bindPopup(popupHtml({company:item.company,address:item.address,color,lat:latlng.lat||latlng[0],lon:latlng.lng||latlng[1]}));
+          state.labelEntries.push({layer: poly, label});
         }
 
         if(latlng){
@@ -566,8 +636,58 @@
     }
     rebuildLegend();
     if(state.bounds.isValid()) map.fitBounds(state.bounds.pad(0.2));
-    rebuildHouseLabels(); // метки номеров без «палочек»
+    rebuildHouseLabels();
   }
+
+  // ===== Генерация «наряда» =====
+  function generatePrint(){
+    const sel = Array.from(state.selected);
+    if(sel.length===0){ alert('Не выбрано ни одного дома. Включи режим выбора и кликни по домам.'); return; }
+    // собираем строки
+    const rows = sel.map((l,i)=>({
+      n: i+1,
+      address: l._address||'',
+      company: l._company||'',
+      color: colorByCompany(l._company||'')
+    }));
+    // HTML для печати
+    const html = `<!doctype html>
+<html><head><meta charset="utf-8">
+<title>Наряд — выбранные адреса</title>
+<style>
+  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial; margin:24px;}
+  h1{font-size:20px;margin:0 0 12px;}
+  .muted{color:#64748b;font-size:12px;margin-bottom:12px}
+  table{border-collapse:collapse;width:100%;}
+  th,td{border:1px solid #e5e7eb;padding:6px 8px;font-size:13px;text-align:left;vertical-align:top;}
+  th{background:#f8fafc;}
+  .sw{display:inline-block;width:14px;height:14px;border:1px solid rgba(0,0,0,.25);border-radius:3px;margin-right:6px;}
+  .pill{display:inline-block;padding:1px 6px;border-radius:999px;border:1px solid #e5e7eb;background:#f1f5f9;font-size:12px}
+  @media print{ .noprint{display:none} }
+</style></head>
+<body>
+  <h1>Наряд — выбранные адреса</h1>
+  <div class="muted">Цвета соответствуют компаниям на карте.</div>
+  <table>
+    <thead><tr><th>№</th><th>Адрес</th><th>Компания</th><th>Цвет</th></tr></thead>
+    <tbody>
+      ${rows.map(r=>`<tr>
+        <td>${r.n}</td>
+        <td>${escapeHtml(r.address)}</td>
+        <td><span class="pill">${escapeHtml(r.company||'(без компании)')}</span></td>
+        <td><span class="sw" style="background:${r.color}"></span>${r.color}</td>
+      </tr>`).join('')}
+    </tbody>
+  </table>
+  <div class="noprint" style="margin-top:12px;">
+    <button onclick="window.print()">Печать</button>
+  </div>
+</body></html>`;
+    const w = window.open('', '_blank');
+    if(!w){ alert('Разреши всплывающие окна для печати.'); return; }
+    w.document.open(); w.document.write(html); w.document.close();
+  }
+  document.getElementById('btnGenerate').addEventListener('click', generatePrint);
 
   // ===== Обработчики =====
   document.getElementById('btnBuild').addEventListener('click', ()=>{
