@@ -44,6 +44,26 @@
       border: 1px solid rgba(0,0,0,.2);
       cursor: pointer;
     }
+
+    /* Метки номеров домов */
+    .house-label {
+      background: transparent;
+      border: none;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }
+    .house-label .hl {
+      display: inline-block;
+      padding: 1px 6px;
+      font-size: 12px;
+      font-weight: 700;
+      background: rgba(255,255,255,.92);
+      border: 2px solid var(--hl-color, rgba(0,0,0,.25));
+      border-radius: 6px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.12);
+      line-height: 1.1;
+      white-space: nowrap;
+    }
   </style>
 </head>
 <body>
@@ -68,10 +88,16 @@
     <div class="panel">
       <div class="row" style="justify-content:space-between;">
         <div style="font-weight:600;">Адреса (ручной ввод)</div>
-        <label class="row" style="gap:6px;">
-          <input type="checkbox" id="chkLabels" />
-          Показывать подписи на карте
-        </label>
+        <div class="row" style="gap:12px;">
+          <label class="row" style="gap:6px;">
+            <input type="checkbox" id="chkLabels" />
+            Показывать подписи на карте
+          </label>
+          <label class="row" style="gap:6px;">
+            <input type="checkbox" id="chkHnums" />
+            Номера домов
+          </label>
+        </div>
       </div>
       <textarea id="addrInput" placeholder="Форматы:
 • г. Саратов, улица Рахова, 169/171[TAB]ООО Альфа
@@ -109,11 +135,13 @@
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 20, attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
 
   const $ = (s)=>document.querySelector(s);
-  const state = { layers: [], labelEntries: [], bounds: L.latLngBounds(), items: [] };
+  const state = { layers: [], labelEntries: [], bounds: L.latLngBounds(), items: [], numberMarkers: [] };
 
   function clearAll(){
     state.layers.forEach(l => map.removeLayer(l));
+    state.numberMarkers.forEach(m => map.removeLayer(m));
     state.layers = [];
+    state.numberMarkers = [];
     state.labelEntries = [];
     state.items = [];
     state.bounds = L.latLngBounds();
@@ -137,15 +165,16 @@
       addListItem({...it, color});
     }
   }
-  function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39'}[c])); }
+  function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
   // ===== Цвета по компаниям / легенда =====
   const companyColor = new Map();
 
+  // Контрастная палитра
   const CONTRAST_COLORS = [
     '#e6194b','#3cb44b','#ffe119','#4363d8','#f58231','#911eb4',
     '#46f0f0','#f032e6','#bcf60c','#fabebe','#008080','#e6beff',
-    '#9a6324','#fffac8','#800000','#aaffc3','#808000','#ffd8b1',
+    '#9a6324','#fffac8','#800000','#aaffc3','#808000','#ffd8б1',
     '#000075','#808080','#7f7f7f','#42d4f4','#bfef45','#ffd700',
     '#0082c8','#aa6e28','#d2f53c','#d66dd6','#00a2e8','#ffaec9',
     '#a10000','#00a100','#0044a1','#7f007f','#00a199','#ff7f00'
@@ -165,6 +194,7 @@
   function setCompanyColor(company, color){
     companyColor.set(company, color);
     recolorCompanyLayers(company, color);
+    recolorHouseLabels(company, color);
     rebuildLegend();
     rerenderList();
   }
@@ -176,6 +206,14 @@
       }
     }
   }
+  function recolorHouseLabels(company, color){
+    for(const m of state.numberMarkers){
+      if(m && m._company === company && m._icon){
+        const span = m._icon.querySelector('.hl');
+        if(span) span.style.setProperty('--hl-color', color);
+      }
+    }
+  }
 
   function addLegendRow(s,c){
     const host=$('#legend');
@@ -183,7 +221,7 @@
     const sw=document.createElement('div');
     sw.className='swatch swatch-click';
     sw.style.background=c||'#7c3aed';
-    if (s && companyColor.has(s)) {
+    if (s) {
       sw.title = 'Изменить цвет';
       sw.addEventListener('click', (ev)=> openColorPickerFor(s, ev.currentTarget));
     }
@@ -236,56 +274,46 @@
   });
 
   // ===== Парсеры =====
-  // помощники: распознать "строку компании" и нормализовать опечатку 000→ООО
   function isCompanyLine(s){
-    const t = s.trim();
+    const t = String(s||'').trim();
     return /^((ООО|ОАО|ПАО|ЗАО|АО|ИП|ТОО|OOO|LLC|LTD|GMBH|GmbH)|[0OО]{3})\b/i.test(t);
   }
   function normalizeCompany(s){
-    return s.trim()
-      .replace(/^[0OО]{3}\s+/i,'ООО ')
+    return String(s||'').trim()
+      .replace(/^[0OО]{3}\b\.?/i,'ООО')
       .replace(/\s+/g,' ')
       .trim();
   }
 
-  // 1) Ручной ввод: теперь понимает два варианта:
-  //    a) "Адрес<TAB>Компания"
-  //    b) "Адрес"   (следующая строка)   "Компания"
   function parseTextarea(text){
-    const raw = text.split(/\r?\n/).map(s=>s.replace(/^\s+|\s+$/g,'')).filter(Boolean);
+    const raw = text.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
     const out=[];
     for(let i=0;i<raw.length;i++){
-      const line = raw[i];
+      let line = raw[i];
 
-      // 6-колоночный формат
-      const m6=/^(\S+)\s+(\S+)\s+(\S+)\s+(.+?)\s+(\S+)\s+(\S+)$/.exec(line);
-      if(m6){
-        const city=m6[3], street=m6[4], house=m6[5];
-        out.push({ address:`${city}, ${street} ${house}`, company:'' });
+      const parts = line.split(/\t/);
+      if (parts.length >= 2){
+        out.push({ address: parts[0].trim(), company: normalizeCompany(parts.slice(1).join(' ').trim()) });
         continue;
       }
 
-      // TAB: адрес\tкомпания
-      const tab = line.split(/\t/);
-      if(tab.length>=2){
-        out.push({ address:tab[0].trim(), company: normalizeCompany(tab.slice(1).join('\t')) });
+      let m = line.match(/^(.*?)(?:\s{2,}|[—\-:;|]\s*)(\b(?:ООО|ОАО|ПАО|ЗАО|АО|ИП|OOO|LLC|LTD|GMBH|[0OО]{3})\b\.?\s*.*)$/i);
+      if(m){
+        out.push({ address: m[1].trim(), company: normalizeCompany(m[2]) });
         continue;
       }
 
-      // 2-строчный ввод: текущая строка — адрес, следующая — компания
       if(i+1 < raw.length && isCompanyLine(raw[i+1])){
         out.push({ address: line, company: normalizeCompany(raw[i+1]) });
-        i++; // пропустить строку компании
+        i++;
         continue;
       }
 
-      // иначе — адрес без компании
       out.push({ address: line, company: '' });
     }
     return out;
   }
 
-  // 2) Файл: CSV/TSV (оставил как было)
   function stripBOM(s){ return s.replace(/^\uFEFF/, ''); }
   function smartSplit(line, delim){
     const out=[], d = delim, n = line.length;
@@ -346,7 +374,7 @@
     const j = await r.json();
     const f = j?.features?.[0];
     if(!f) return null;
-    const point = f.geometry?.type==='Point' ? f.geometry.coordinates : null; // [lon, lat]
+    const point = f.geometry?.type==='Point' ? f.geometry.coordinates : null;
     let polygon = null;
     if (f.geometry?.type === 'Polygon') polygon = f.geometry.coordinates[0];
     if (f.geometry?.type === 'MultiPolygon') polygon = f.geometry.coordinates[0][0];
@@ -412,7 +440,7 @@
     return best || null;
   }
 
-  // ===== Геометрия =====
+  // ===== Геометрия и подписи =====
   function squareAround([lon, lat], meters = 30){
     const dLat = (meters / 111320);
     const dLon = (meters / (40075000 * Math.cos(lat*Math.PI/180) / 360));
@@ -423,18 +451,7 @@
       [lat-dLat, lon-dLon]
     ];
   }
-  function withAlpha(color, a){
-    if(/^#([0-9a-f]{6})$/i.test(color)){
-      const r=parseInt(color.slice(1,3),16), g=parseInt(color.slice(3,5),16), b=parseInt(color.slice(5,7),16);
-      return `rgba(${r},${g},${b},${a})`;
-    }
-    if(/^hsl\(/i.test(color)){
-      return color.replace(/^hsl/i,'hsla').replace(/\)$/,`, ${a})`);
-    }
-    return color;
-  }
 
-  // ===== Подписи/попапы =====
   function applyTooltip(layer, label){
     const permanent = $('#chkLabels').checked;
     if (layer._tooltip) layer.unbindTooltip();
@@ -450,6 +467,32 @@
     });
   }
   $('#chkLabels').addEventListener('change', reapplyAllTooltips);
+
+  // извлечь номер дома из адреса
+  function extractHouse(address){
+    const s = String(address||'').replace(/["“”]/g,'').trim();
+    const m = s.match(/,\s*([^,]+)\s*$/); // всё после последней запятой
+    if(m) return m[1].replace(/^(дом|д\.)\s*/i,'').trim();
+    const m2 = s.match(/(\d+[0-9A-Za-zА-Яа-я\/\-]*?)\s*$/);
+    return (m2 ? m2[1] : s);
+  }
+
+  function createHouseMarker(item){
+    const color = colorByCompany(item.company||'');
+    const html = `<span class="hl" style="--hl-color:${color}">${escapeHtml(extractHouse(item.address))}</span>`;
+    const icon = L.divIcon({ className:'house-label', html, iconSize: null });
+    const marker = L.marker([item.lat, item.lon], { icon, interactive:false, keyboard:false }).addTo(map);
+    marker._company = item.company || '';
+    state.numberMarkers.push(marker);
+  }
+
+  function refreshHouseLabels(){
+    state.numberMarkers.forEach(m => map.removeLayer(m));
+    state.numberMarkers = [];
+    if(!$('#chkHnums').checked) return;
+    state.items.forEach(it => { if(it.lat!=null && it.lon!=null) createHouseMarker(it); });
+  }
+  $('#chkHnums').addEventListener('change', refreshHouseLabels);
 
   function popupHtml({company, address, color, lat, lon}){
     const coord = (lat!=null&&lon!=null) ? `<div class='muted' style="margin-top:6px">${lat.toFixed(6)}, ${lon.toFixed(6)}</div>` : '';
@@ -536,6 +579,7 @@
     }
     rebuildLegend();
     if(state.bounds.isValid()) map.fitBounds(state.bounds.pad(0.2));
+    refreshHouseLabels(); // <<< строим/перестраиваем метки номеров
   }
 
   // ===== Обработчики =====
@@ -559,12 +603,11 @@
     if(state.bounds.isValid()) map.fitBounds(state.bounds.pad(0.2));
   });
 
-  // демо-вставка — один правильный пример (Рахова)
+  // демо — один правильный пример (Рахова)
   document.getElementById('addrInput').value = [
     'г. Саратов, "улица Рахова, 169/171"',
-    'ООО Альфа'
-  ].join('\n'); // можно и адрес<TAB>ООО Альфа
-
+    '000  Альфа'
+  ].join('\n');
 })();
 </script>
 </body>
