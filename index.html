@@ -78,13 +78,24 @@
     </div>
 
     <div class="panel">
+      <div class="row" style="gap:12px; align-items: end;">
+        <div style="flex:1;">
+          <div style="font-weight:600; margin-bottom:6px;">Город по умолчанию</div>
+          <input id="cityDefault" type="text" placeholder="г. Саратов" style="width:100%;" />
+          <div class="hint" style="margin-top:6px;">Будет подставлен перед адресом: <i>Город, Улица, Дом</i>.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
       <div style="font-weight:600; margin-bottom:6px;">Загрузка файла (CSV/TSV)</div>
       <div class="row">
         <input type="file" id="fileInput" accept=".csv,.tsv,.txt" />
         <button id="btnBuildFile">Загрузить и построить</button>
       </div>
       <div class="hint" style="margin-top:8px;">
-        Колонки: <b>Город</b>, <b>Адрес</b>, <b>Компания</b>. Если разделитель — запятая, адреса с запятыми оборачивай в кавычки.
+        Поддерживается новый формат колонок: <b>№</b>, <b>Улица</b>, <b>Дом</b>, <b>кол подъездов</b>, <b>Компания</b>.<br/>
+        Также сохраняется совместимость со старым форматом (<b>Город</b>, <b>Адрес</b>, <b>Компания</b>).
       </div>
     </div>
 
@@ -102,12 +113,12 @@
           </label>
         </div>
       </div>
-      <textarea id="addrInput" placeholder="Форматы:
-• г. Саратов, улица Рахова, 169/171[TAB]ООО Альфа
-• г. Саратов, улица Рахова, 169/171 ↵
-  ООО Альфа (на следующей строке)
-• Город, Адрес[TAB]Компания
-• Старый 6-колоночный: ID ID2 Город Улица Дом Подъезд"></textarea>
+      <textarea id="addrInput" placeholder="Варианты форматов (каждая строка — один адрес):
+• №[TAB]Улица[TAB]Дом[TAB]кол подъездов[TAB]Компания
+  Пример: 1[TAB]улица Рахова[TAB]169/171[TAB]2[TAB]ООО Альфа
+• Старый: Город, Адрес[TAB]Компания
+• Два ряда: Адрес ↵ Компания (на следующей строке)
+• 6-колоночный: ID ID2 Город Улица Дом Подъезд"></textarea>
       <div class="row" style="margin-top:8px;">
         <button id="btnBuild">Построить</button>
         <button id="btnClear">Очистить</button>
@@ -177,7 +188,10 @@
     el.innerHTML=`<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;">
       <div style="font-weight:600">${escapeHtml(item.address)}</div>
       ${item.company?`<span class='pill' style='border:1px solid ${item.color||'#ddd'}'>${escapeHtml(item.company)}</span>`:''}
-    </div><div class='muted'>${item.lat!=null&&item.lon!=null?`${Number(item.lat).toFixed(6)}, ${Number(item.lon).toFixed(6)}`:'—'}</div>`;
+    </div>
+    <div class='muted'>
+      ${item.entrances ? `Подъездов: ${item.entrances} • ` : ''}${item.lat!=null&&item.lon!=null?`${Number(item.lat).toFixed(6)}, ${Number(item.lon).toFixed(6)}`:'—'}
+    </div>`;
     el.addEventListener('click',()=>{ if(item.lat!=null&&item.lon!=null){ map.setView([item.lat,item.lon], 17); } });
     $('#list').appendChild(el);
   }
@@ -300,23 +314,61 @@
       .replace(/\s+/g,' ')
       .trim();
   }
+
+  // новый 5-колоночный разбор из строки (tab-разделитель)
+  function parseFiveCols(parts){
+    // parts: №, Улица, Дом, кол подъездов, Компания
+    const n = parts[0]?.trim();
+    const street = parts[1]?.trim();
+    const house = parts[2]?.trim();
+    const entrances = parts[3]?.trim();
+    const company = normalizeCompany(parts.slice(4).join(' ').trim()); // на случай табов внутри
+    const city = ($('#cityDefault').value || '').trim();
+    const baseAddr = [street, house].filter(Boolean).join(', ');
+    const address = city ? `${city}, ${baseAddr}` : baseAddr;
+    return { num:n, street, house, entrances, address, company };
+  }
+
   function parseTextarea(text){
     const raw = text.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
     const out=[];
     for(let i=0;i<raw.length;i++){
-      let line = raw[i];
-      const parts = line.split(/\t/);
-      if (parts.length >= 2){
-        out.push({ address: parts[0].trim(), company: normalizeCompany(parts.slice(1).join(' ').trim()) });
+      const line = raw[i];
+
+      // 1) новый формат: № \t Улица \t Дом \t кол \t Компания
+      const partsTab = line.split(/\t/);
+      if (partsTab.length >= 5){
+        const obj = parseFiveCols(partsTab);
+        out.push(obj);
         continue;
       }
+
+      // 2) старый: Адрес[TAB]Компания
+      if (partsTab.length >= 2){
+        out.push({ address: partsTab[0].trim(), company: normalizeCompany(partsTab.slice(1).join(' ').trim()) });
+        continue;
+      }
+
+      // 3) «адрес на строке N, компания на строке N+1»
+      if(i+1 < raw.length && isCompanyLine(raw[i+1])){
+        out.push({ address: line, company: normalizeCompany(raw[i+1]) });
+        i++;
+        continue;
+      }
+
+      // 4) попытка выделить компанию через двоеточие/тире в одной строке
       let m = line.match(/^(.*?)(?:\s{2,}|[—\-:;|]\s*)(\b(?:ООО|ОАО|ПАО|ЗАО|АО|ИП|OOO|LLC|LTD|GMBH|[0OО]{3})\b\.?\s*.*)$/i);
-      if(m){ out.push({ address: m[1].trim(), company: normalizeCompany(m[2]) }); continue; }
-      if(i+1 < raw.length && isCompanyLine(raw[i+1])){ out.push({ address: line, company: normalizeCompany(raw[i+1]) }); i++; continue; }
+      if(m){
+        out.push({ address: m[1].trim(), company: normalizeCompany(m[2]) });
+        continue;
+      }
+
+      // 5) иначе — просто адрес
       out.push({ address: line, company: '' });
     }
     return out;
   }
+
   function stripBOM(s){ return s.replace(/^\uFEFF/, ''); }
   function smartSplit(line, delim){
     const out=[], d = delim, n = line.length;
@@ -340,25 +392,58 @@
     }
     return cands.map(score).sort((a,b)=> a.spread-b.spread || b.maxCols-a.maxCols)[0].d;
   }
+
   function parseCSV(text){
     const t = stripBOM(text);
     const delim = detectDelimiter(t);
     const rows = t.split(/\r?\n/).filter(l=>l.trim().length>0);
     if(rows.length===0) return [];
-    const header = smartSplit(rows[0], delim).map(h=>h.replace(/^"|"$/g,'').trim().toLowerCase());
-    const idxCity    = header.findIndex(h=>/^(город|city)$/.test(h));
-    const idxAddr    = header.findIndex(h=>/^(адрес|address)$/.test(h));
-    const idxCompany = header.findIndex(h=>/^(компан|company)/.test(h));
+
+    const headerRaw = smartSplit(rows[0], delim).map(h=>h.replace(/^"|"$/g,'').trim());
+    const header = headerRaw.map(h=>h.toLowerCase());
+
+    // индексы нового формата
+    const idxNum       = header.findIndex(h=>/^(№|#|num|номер)$/i.test(headerRaw[header.indexOf(h)] || h) || /^№$/.test(h));
+    const idxStreet    = header.findIndex(h=>/(улица|street)/.test(h));
+    const idxHouse     = header.findIndex(h=>/^(дом|house|№ дома|номер дома)$/.test(h) || /(^|[^а-я])дом([^а-я]|$)/.test(h));
+    const idxEntrances = header.findIndex(h=>/(кол|кол-во|количество).*(подъезд|подъездов)|entrances/.test(h));
+    const idxCompanyN  = header.findIndex(h=>/^(компан|company)/.test(h));
+
+    // индексы старого формата
+    const idxCityOld    = header.findIndex(h=>/^(город|city)$/.test(h));
+    const idxAddrOld    = header.findIndex(h=>/^(адрес|address)$/.test(h));
+    const idxCompanyOld = idxCompanyN >= 0 ? idxCompanyN : header.findIndex(h=>/^(компан|company)/.test(h));
+
     const out=[];
+    const cityDefault = ($('#cityDefault').value || '').trim();
+
+    const hasNew = (idxStreet>=0 && idxHouse>=0); // ключевой признак нового формата
+
     for(let i=1;i<rows.length;i++){
       const cols = smartSplit(rows[i], delim).map(v=>{
         if(v.startsWith('"') && v.endsWith('"')) v=v.slice(1,-1).replace(/""/g,'"');
         return v.trim();
       });
-      const city = idxCity>=0 ? cols[idxCity] : '';
-      const addr = idxAddr>=0 ? cols[idxAddr] : '';
-      const comp = idxCompany>=0 ? cols[idxCompany] : '';
-      const full = city ? `${city}, ${addr}` : addr;
+
+      if (hasNew){
+        const parts = [];
+        parts[0] = idxNum>=0 ? cols[idxNum] : '';
+        parts[1] = idxStreet>=0 ? cols[idxStreet] : '';
+        parts[2] = idxHouse>=0 ? cols[idxHouse] : '';
+        parts[3] = idxEntrances>=0 ? cols[idxEntrances] : '';
+        // компания — либо по idxCompanyN, либо пусто
+        const comp = idxCompanyN>=0 ? cols[idxCompanyN] : '';
+        // собрать в 5-колонник и прогнать через общий парсер
+        const obj = parseFiveCols([parts[0]||'', parts[1]||'', parts[2]||'', parts[3]||'', comp||'']);
+        out.push(obj);
+        continue;
+      }
+
+      // старый формат
+      const city = idxCityOld>=0 ? cols[idxCityOld] : '';
+      const addr = idxAddrOld>=0 ? cols[idxAddrOld] : '';
+      const comp = idxCompanyOld>=0 ? cols[idxCompanyOld] : '';
+      const full = (city || cityDefault) ? `${(city||cityDefault)}, ${addr}` : addr;
       if(full) out.push({ address: full, company: normalizeCompany(comp) });
     }
     return out;
@@ -437,15 +522,23 @@
   // ===== Подписи компаний =====
   function applyTooltip(layer, label){
     const permanent = $('#chkLabels').checked;
+    let hint = '';
+    if (layer._entrances) hint = ` (подъездов: ${layer._entrances})`;
+    if (layer._house) hint = (hint ? ` • ${layer._house}` : layer._house);
+    const final = [label, hint].filter(Boolean).join('');
     if (layer._tooltip) layer.unbindTooltip();
-    layer.bindTooltip(label, { permanent, direction: 'top', className: 'company-tooltip', sticky: !permanent });
+    layer.bindTooltip(final, { permanent, direction: 'top', className: 'company-tooltip', sticky: !permanent });
     if (permanent) layer.openTooltip();
   }
   function reapplyAllTooltips(){
     const permanent = $('#chkLabels').checked;
     state.labelEntries.forEach(({layer, label})=>{
       if (layer._tooltip) layer.unbindTooltip();
-      layer.bindTooltip(label, { permanent, direction: 'top', className: 'company-tooltip', sticky: !permanent });
+      let hint = '';
+      if (layer._entrances) hint = ` (подъездов: ${layer._entrances})`;
+      if (layer._house) hint = (hint ? ` • ${layer._house}` : layer._house);
+      const final = [label, hint].filter(Boolean).join('');
+      layer.bindTooltip(final, { permanent, direction: 'top', className: 'company-tooltip', sticky: !permanent });
       if (permanent) layer.openTooltip();
     });
   }
@@ -466,7 +559,7 @@
   function placeLabelAtBuilding(layer){
     const addr = layer._address||'', company = layer._company||'';
     const color = colorByCompany(company);
-    const text = extractHouse(addr);
+    const text = layer._house || extractHouse(addr);
     const b = layer.getBounds();
     const midLat = (b.getNorth()+b.getSouth())/2;
     const midLng = (b.getEast()+b.getWest())/2;
@@ -571,12 +664,13 @@
   });
 
   // ===== Попапы =====
-  function popupHtml({company, address, color, lat, lon}){
+  function popupHtml({company, address, color, lat, lon, entrances, house}){
     const coord = (lat!=null&&lon!=null) ? `<div class='muted' style="margin-top:6px">${lat.toFixed(6)}, ${lon.toFixed(6)}</div>` : '';
+    const meta = (entrances || house) ? `<div class='muted' style="margin-top:6px">${house?`Дом: ${escapeHtml(house)}`:''}${(entrances&&house)?' • ':''}${entrances?`Подъездов: ${escapeHtml(String(entrances))}`:''}</div>` : '';
     return `<div style="font-weight:700; margin-bottom:4px;">
         <span class="pill" style="border:1px solid ${color};">${escapeHtml(company||'(без компании)')}</span>
       </div>
-      <div>${escapeHtml(address)}</div>${coord}`;
+      <div>${escapeHtml(address)}</div>${meta}${coord}`;
   }
 
   // ===== Построение =====
@@ -590,11 +684,14 @@
     clearAll();
     for(const item of items){
       const color = colorByCompany(item.company||'');
+      const entrances = item.entrances ? String(item.entrances).trim() : '';
+      const houseShort = item.house ? String(item.house).trim() : '';
+
       try{
         const res = await geocode(item.address);
         if(!res){
-          state.items.push({address:item.address, company:item.company||'', lat:null, lon:null});
-          addListItem({...item, color});
+          state.items.push({address:item.address, company:item.company||'', entrances, lat:null, lon:null});
+          addListItem({...item, color, entrances});
           continue;
         }
 
@@ -623,6 +720,8 @@
         if(poly){
           poly._company = item.company || '';
           poly._address = item.address || '';
+          poly._entrances = entrances || '';
+          poly._house = houseShort || '';
           poly.on('click', ()=> toggleLayerSelection(poly));
           state.layers.push(poly);
 
@@ -630,7 +729,14 @@
           applyTooltip(poly, label);
           const _lat = latlng.lat!==undefined ? latlng.lat : latlng[0];
           const _lon = latlng.lng!==undefined ? latlng.lng : latlng[1];
-          poly.bindPopup(popupHtml({company:item.company,address:item.address,color,lat:_lat,lon:_lon}));
+          poly.bindPopup(popupHtml({
+            company:item.company,
+            address:item.address,
+            color,
+            lat:_lat, lon:_lon,
+            entrances,
+            house: houseShort || extractHouse(item.address)
+          }));
           state.labelEntries.push({layer: poly, label});
         }
 
@@ -639,16 +745,16 @@
           const lon = latlng.lng!==undefined ? latlng.lng : latlng[1];
           item.lat = lat; item.lon = lon;
           state.bounds.extend([lat, lon]);
-          state.items.push({address:item.address, company:item.company||'', lat, lon});
+          state.items.push({address:item.address, company:item.company||'', entrances, lat, lon});
         } else {
-          state.items.push({address:item.address, company:item.company||'', lat:null, lon:null});
+          state.items.push({address:item.address, company:item.company||'', entrances, lat:null, lon:null});
         }
-        addListItem({...item, color});
+        addListItem({...item, color, entrances});
         await new Promise(r=>setTimeout(r,160));
       }catch(e){
         console.warn('Ошибка геокодинга', item.address, e);
-        state.items.push({address:item.address, company:item.company||'', lat:null, lon:null});
-        addListItem({...item, color});
+        state.items.push({address:item.address, company:item.company||'', entrances, lat:null, lon:null});
+        addListItem({...item, color, entrances});
       }
     }
     rebuildLegend();
@@ -664,6 +770,8 @@
       n: i+1,
       address: l._address||'',
       company: l._company||'',
+      entrances: l._entrances||'',
+      house: l._house||'',
       color: colorByCompany(l._company||'')
     }));
     const html = `<!doctype html>
@@ -684,11 +792,13 @@
   <h1>Наряд — выбранные адреса</h1>
   <div class="muted">Цвета соответствуют компаниям на карте.</div>
   <table>
-    <thead><tr><th>№</th><th>Адрес</th><th>Компания</th><th>Цвет</th></tr></thead>
+    <thead><tr><th>№</th><th>Адрес</th><th>Дом</th><th>Подъездов</th><th>Компания</th><th>Цвет</th></tr></thead>
     <tbody>
       ${rows.map(r=>`<tr>
         <td>${r.n}</td>
         <td>${escapeHtml(r.address)}</td>
+        <td>${escapeHtml(r.house||'')}</td>
+        <td>${escapeHtml(r.entrances||'')}</td>
         <td><span class="pill">${escapeHtml(r.company||'(без компании)')}</span></td>
         <td><span class="sw" style="background:${r.color}"></span>${r.color}</td>
       </tr>`).join('')}
@@ -723,6 +833,8 @@
       return {
         address: l._address||'',
         company: l._company||'',
+        entrances: l._entrances||'',
+        house: l._house||'',
         color: colorByCompany(l._company||''),
         latlngs: coordsFromLatLngs(ll),
         bounds: l.getBounds ? l.getBounds() : null
@@ -744,7 +856,6 @@
   .addr{margin-bottom:6px;font-size:13px}
   @media print{ .noprint{display:none} #wrap{grid-template-columns:0 1fr} #side{display:none} }
 
-  /* === стили номеров домов для экспортной страницы === */
   .house-label{background:transparent;border:none;transform:translate(-50%,-50%);pointer-events:none;}
   .house-label .hl{
     display:inline-block;padding:0 3px;font-size:11px;font-weight:700;
@@ -792,13 +903,7 @@ function placeEdgeLabel(layer, color, text){
   const b = layer.getBounds();
   const midLat = (b.getNorth()+b.getSouth())/2;
   const midLng = (b.getEast()+b.getWest())/2;
-  const candidates = [
-    {anchor: L.latLng(b.getNorth(), midLng), off:[0,-12]},
-    {anchor: L.latLng(midLat, b.getEast()),  off:[+12,0]},
-    {anchor: L.latLng(midLat, b.getWest()),  off:[-12,0]},
-    {anchor: L.latLng(b.getSouth(), midLng), off:[0,+12]},
-  ];
-  const a = candidates[0];
+  const a = {anchor: L.latLng(b.getNorth(), midLng), off:[0,-12]};
   const pos = map.layerPointToLatLng(map.latLngToLayerPoint(a.anchor).add([a.off[0], a.off[1]]));
   const html = '<span class="hl" style="--hl-color:'+color+'">'+text.replace(/&/g,'&amp;').replace(/</g,'&lt;')+'</span>';
   const icon = L.divIcon({ className:'house-label', html, iconSize:null });
@@ -808,21 +913,22 @@ function placeEdgeLabel(layer, color, text){
 function rebuildLabels(){
   labels.forEach(m=>map.removeLayer(m)); labels=[];
   polys.forEach(p=>{
-    placeEdgeLabel(p, p._color, extractHouse(p._addr));
+    placeEdgeLabel(p, p._color, (p._house || extractHouse(p._addr)));
   });
 }
 data.forEach(f=>{
   const latlngs = toLatLngs(f.latlngs);
   const poly = L.polygon(latlngs, { color: f.color, weight:2, fillColor: f.color, fillOpacity:0.9 }).addTo(map);
-  poly._addr = f.address; poly._color = f.color;
+  poly._addr = f.address; poly._color = f.color; poly._house = f.house || '';
   polys.push(poly);
   bounds.extend(poly.getBounds());
-  const house = extractHouse(f.address);
+  const house = f.house || extractHouse(f.address);
   placeEdgeLabel(poly, f.color, house);
   companies.set(f.company||'(без компании)', f.color);
   const div = document.createElement('div');
   div.className='addr';
-  div.innerHTML = '<span class="sw" style="background:'+f.color+'"></span> '+(f.company||'(без компании)')+' — '+f.address;
+  const meta = (f.house || f.entrances) ? ' — ' + [f.house?('дом: '+f.house):'', f.entrances?('подъездов: '+f.entrances):''].filter(Boolean).join(' • ') : '';
+  div.innerHTML = '<span class="sw" style="background:'+f.color+'"></span> '+(f.company||'(без компании)')+' — '+f.address+meta;
   document.getElementById('list').appendChild(div);
 });
 // легенда
@@ -853,7 +959,7 @@ map.on('moveend zoomend', rebuildLabels);
     if(!f){ alert('Выбери файл CSV/TSV'); return; }
     const text = await f.text();
     const items = parseCSV(text);
-    if(items.length===0){ alert('Не удалось прочитать данные. Проверь колонки: Город, Адрес, Компания.'); return; }
+    if(items.length===0){ alert('Не удалось прочитать данные. Проверь колонки (новый или старый формат).'); return; }
     buildFromItems(items);
   });
   document.getElementById('btnClear').addEventListener('click', ()=>{
@@ -864,10 +970,10 @@ map.on('moveend zoomend', rebuildLabels);
     if(state.bounds.isValid()) map.fitBounds(state.bounds.pad(0.2));
   });
 
-  // демо — один правильный пример (Рахова)
+  // демо — новый формат
+  document.getElementById('cityDefault').value = 'г. Саратов';
   document.getElementById('addrInput').value = [
-    'г. Саратов, "улица Рахова, 169/171"',
-    '000  Альфа'
+    '1\tулица Рахова\t169/171\t2\tООО Альфа'
   ].join('\n');
 })();
 </script>
