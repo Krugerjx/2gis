@@ -474,7 +474,7 @@
 
   // ===== Overpass: контур здания =====
   async function fetchBuildingPolygon({ lon, lat }) {
-    const R = 200;
+    const R = 500;
     const q = `
       [out:json][timeout:25];
       (
