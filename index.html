@@ -78,24 +78,14 @@
     </div>
 
     <div class="panel">
-      <div class="row" style="gap:12px; align-items: end;">
-        <div style="flex:1;">
-          <div style="font-weight:600; margin-bottom:6px;">Город по умолчанию</div>
-          <input id="cityDefault" type="text" placeholder="г. Саратов" style="width:100%;" />
-          <div class="hint" style="margin-top:6px;">Будет подставлен перед адресом: <i>Город, Улица, Дом</i>.</div>
-        </div>
-      </div>
-    </div>
-
-    <div class="panel">
       <div style="font-weight:600; margin-bottom:6px;">Загрузка файла (CSV/TSV)</div>
       <div class="row">
         <input type="file" id="fileInput" accept=".csv,.tsv,.txt" />
         <button id="btnBuildFile">Загрузить и построить</button>
       </div>
       <div class="hint" style="margin-top:8px;">
-        Поддерживается новый формат колонок: <b>№</b>, <b>Улица</b>, <b>Дом</b>, <b>кол подъездов</b>, <b>Компания</b>.<br/>
-        Также сохраняется совместимость со старым форматом (<b>Город</b>, <b>Адрес</b>, <b>Компания</b>).
+        Новый формат колонок: <b>№</b>, <b>Город</b>, <b>Улица</b>, <b>Дом</b>, <b>кол подъездов</b>, <b>Компания</b>.<br/>
+        Поддерживаются и старые форматы: <b>Город</b>, <b>Адрес</b>, <b>Компания</b> или прочие варианты из подсказки ниже.
       </div>
     </div>
 
@@ -114,11 +104,11 @@
         </div>
       </div>
       <textarea id="addrInput" placeholder="Варианты форматов (каждая строка — один адрес):
-• №[TAB]Улица[TAB]Дом[TAB]кол подъездов[TAB]Компания
-  Пример: 1[TAB]улица Рахова[TAB]169/171[TAB]2[TAB]ООО Альфа
+• №[TAB]Город[TAB]Улица[TAB]Дом[TAB]кол подъездов[TAB]Компания
+  Пример: 1[TAB]г. Саратов[TAB]улица Рахова[TAB]169/171[TAB]2[TAB]ООО Альфа
 • Старый: Город, Адрес[TAB]Компания
 • Два ряда: Адрес ↵ Компания (на следующей строке)
-• 6-колоночный: ID ID2 Город Улица Дом Подъезд"></textarea>
+• 6-колоночный (старый): ID ID2 Город Улица Дом Подъезд"></textarea>
       <div class="row" style="margin-top:8px;">
         <button id="btnBuild">Построить</button>
         <button id="btnClear">Очистить</button>
@@ -291,11 +281,7 @@
     pickerEl.style.display = 'grid';
     pickerEl.setAttribute('aria-hidden','false');
   }
-  function hidePicker(){
-    pickerEl.style.display='none';
-    pickerEl.setAttribute('aria-hidden','true');
-    pickerCompany = null;
-  }
+  function hidePicker(){ pickerEl.style.display='none'; pickerEl.setAttribute('aria-hidden','true'); pickerCompany = null; }
   document.addEventListener('click',(e)=>{
     if(pickerEl.style.display==='none') return;
     const withinPicker = pickerEl.contains(e.target);
@@ -315,18 +301,29 @@
       .trim();
   }
 
-  // новый 5-колоночный разбор из строки (tab-разделитель)
+  // новый 6-колоночный разбор из строки (tab-разделитель)
+  function parseSixCols(parts){
+    // parts: №, Город, Улица, Дом, кол подъездов, Компания
+    const n = parts[0]?.trim();
+    const city = parts[1]?.trim();
+    const street = parts[2]?.trim();
+    const house = parts[3]?.trim();
+    const entrances = parts[4]?.trim();
+    const company = normalizeCompany(parts.slice(5).join(' ').trim()); // на случай табов внутри
+    const baseAddr = [city, street, house].filter(Boolean).join(', ');
+    const address = baseAddr;
+    return { num:n, city, street, house, entrances, address, company };
+  }
+
+  // (оставим поддержку «пятиричного» варианта на всякий случай: №, Улица, Дом, подъезды, Компания)
   function parseFiveCols(parts){
-    // parts: №, Улица, Дом, кол подъездов, Компания
     const n = parts[0]?.trim();
     const street = parts[1]?.trim();
     const house = parts[2]?.trim();
     const entrances = parts[3]?.trim();
-    const company = normalizeCompany(parts.slice(4).join(' ').trim()); // на случай табов внутри
-    const city = ($('#cityDefault').value || '').trim();
-    const baseAddr = [street, house].filter(Boolean).join(', ');
-    const address = city ? `${city}, ${baseAddr}` : baseAddr;
-    return { num:n, street, house, entrances, address, company };
+    const company = normalizeCompany(parts.slice(4).join(' ').trim());
+    const address = [street, house].filter(Boolean).join(', ');
+    return { num:n, city:'', street, house, entrances, address, company };
   }
 
   function parseTextarea(text){
@@ -334,14 +331,13 @@
     const out=[];
     for(let i=0;i<raw.length;i++){
       const line = raw[i];
-
-      // 1) новый формат: № \t Улица \t Дом \t кол \t Компания
       const partsTab = line.split(/\t/);
-      if (partsTab.length >= 5){
-        const obj = parseFiveCols(partsTab);
-        out.push(obj);
-        continue;
-      }
+
+      // 1) новый формат: № \t Город \t Улица \t Дом \t кол \t Компания
+      if (partsTab.length >= 6){ out.push(parseSixCols(partsTab)); continue; }
+
+      // 1b) прежний «пятиричный» — поддерживаем
+      if (partsTab.length === 5){ out.push(parseFiveCols(partsTab)); continue; }
 
       // 2) старый: Адрес[TAB]Компания
       if (partsTab.length >= 2){
@@ -358,10 +354,7 @@
 
       // 4) попытка выделить компанию через двоеточие/тире в одной строке
       let m = line.match(/^(.*?)(?:\s{2,}|[—\-:;|]\s*)(\b(?:ООО|ОАО|ПАО|ЗАО|АО|ИП|OOO|LLC|LTD|GMBH|[0OО]{3})\b\.?\s*.*)$/i);
-      if(m){
-        out.push({ address: m[1].trim(), company: normalizeCompany(m[2]) });
-        continue;
-      }
+      if(m){ out.push({ address: m[1].trim(), company: normalizeCompany(m[2]) }); continue; }
 
       // 5) иначе — просто адрес
       out.push({ address: line, company: '' });
@@ -403,7 +396,8 @@
     const header = headerRaw.map(h=>h.toLowerCase());
 
     // индексы нового формата
-    const idxNum       = header.findIndex(h=>/^(№|#|num|номер)$/i.test(headerRaw[header.indexOf(h)] || h) || /^№$/.test(h));
+    const idxNum       = header.findIndex((_,i)=>/^(№|#|num|номер)$/i.test(headerRaw[i]));
+    const idxCityNew   = header.findIndex(h=>/^(город|city)$/.test(h));
     const idxStreet    = header.findIndex(h=>/(улица|street)/.test(h));
     const idxHouse     = header.findIndex(h=>/^(дом|house|№ дома|номер дома)$/.test(h) || /(^|[^а-я])дом([^а-я]|$)/.test(h));
     const idxEntrances = header.findIndex(h=>/(кол|кол-во|количество).*(подъезд|подъездов)|entrances/.test(h));
@@ -415,9 +409,7 @@
     const idxCompanyOld = idxCompanyN >= 0 ? idxCompanyN : header.findIndex(h=>/^(компан|company)/.test(h));
 
     const out=[];
-    const cityDefault = ($('#cityDefault').value || '').trim();
-
-    const hasNew = (idxStreet>=0 && idxHouse>=0); // ключевой признак нового формата
+    const hasNew6 = (idxCityNew>=0 && idxStreet>=0 && idxHouse>=0);
 
     for(let i=1;i<rows.length;i++){
       const cols = smartSplit(rows[i], delim).map(v=>{
@@ -425,25 +417,24 @@
         return v.trim();
       });
 
-      if (hasNew){
+      if (hasNew6){
         const parts = [];
         parts[0] = idxNum>=0 ? cols[idxNum] : '';
-        parts[1] = idxStreet>=0 ? cols[idxStreet] : '';
-        parts[2] = idxHouse>=0 ? cols[idxHouse] : '';
-        parts[3] = idxEntrances>=0 ? cols[idxEntrances] : '';
-        // компания — либо по idxCompanyN, либо пусто
+        parts[1] = idxCityNew>=0 ? cols[idxCityNew] : '';
+        parts[2] = idxStreet>=0 ? cols[idxStreet] : '';
+        parts[3] = idxHouse>=0 ? cols[idxHouse] : '';
+        parts[4] = idxEntrances>=0 ? cols[idxEntrances] : '';
         const comp = idxCompanyN>=0 ? cols[idxCompanyN] : '';
-        // собрать в 5-колонник и прогнать через общий парсер
-        const obj = parseFiveCols([parts[0]||'', parts[1]||'', parts[2]||'', parts[3]||'', comp||'']);
+        const obj = parseSixCols([parts[0]||'', parts[1]||'', parts[2]||'', parts[3]||'', parts[4]||'', comp||'']);
         out.push(obj);
         continue;
       }
 
-      // старый формат
+      // Старый формат: Город, Адрес, Компания
       const city = idxCityOld>=0 ? cols[idxCityOld] : '';
       const addr = idxAddrOld>=0 ? cols[idxAddrOld] : '';
       const comp = idxCompanyOld>=0 ? cols[idxCompanyOld] : '';
-      const full = (city || cityDefault) ? `${(city||cityDefault)}, ${addr}` : addr;
+      const full = city ? `${city}, ${addr}` : addr;
       if(full) out.push({ address: full, company: normalizeCompany(comp) });
     }
     return out;
@@ -971,9 +962,8 @@ map.on('moveend zoomend', rebuildLabels);
   });
 
   // демо — новый формат
-  document.getElementById('cityDefault').value = 'г. Саратов';
   document.getElementById('addrInput').value = [
-    '1\tулица Рахова\t169/171\t2\tООО Альфа'
+    '1\tг. Саратов\tулица Рахова\t169/171\t2\tООО Альфа'
   ].join('\n');
 })();
 </script>
