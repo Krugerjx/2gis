@@ -472,42 +472,76 @@
     return await geocodeNominatim(address);
   }
 
-  // ===== Overpass: контур здания =====
-  async function fetchBuildingPolygon({ lon, lat }) {
-    const R = 500;
+  // ===== Overpass: контур здания (надёжно, с ретраями и зеркалами) =====
+  async function fetchWithTimeout(url, options={}, timeoutMs=65000) {
+    const ctl = new AbortController();
+    const id = setTimeout(()=>ctl.abort(new Error('timeout')), timeoutMs);
+    try {
+      const res = await fetch(url, { ...options, signal: ctl.signal });
+      return res;
+    } finally { clearTimeout(id); }
+  }
+
+  async function fetchBuildingPolygon({ lon, lat }, radius = 500) {
+    const ENDPOINTS = [
+      'https://overpass.kumi.systems/api/interpreter',
+      'https://overpass-api.de/api/interpreter',
+      'https://overpass.openstreetmap.ru/api/interpreter'
+    ];
     const q = `
-      [out:json][timeout:25];
+      [out:json][timeout:60];
       (
-        way["building"](around:${R},${lat},${lon});
-        relation["building"](around:${R},${lat},${lon});
+        way["building"](around:${radius},${lat},${lon});
+        relation["building"](around:${radius},${lat},${lon});
       );
       out body geom;
     `.trim();
 
-    const resp = await fetch('https://overpass-api.de/api/interpreter', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
-      body: new URLSearchParams({ data: q })
-    });
-    if (!resp.ok) return null;
-    const data = await resp.json();
-    if (!Array.isArray(data.elements) || !data.elements.length) return null;
+    const attempts = 3;
+    for (let tryN = 0; tryN < attempts; tryN++) {
+      for (const ep of ENDPOINTS) {
+        try {
+          const resp = await fetchWithTimeout(ep, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+            body: new URLSearchParams({ data: q })
+          }, 65000);
 
-    function dist2(aLat, aLon, bLat, bLon) { const dLat = (aLat - bLat), dLon = (aLon - bLon); return dLat*dLat + dLon*dLon; }
-    let best = null, bestD = Infinity;
-    for (const el of data.elements) {
-      if ((el.type === 'way' || el.type === 'relation') && Array.isArray(el.geometry) && el.geometry.length >= 4) {
-        const ring = el.geometry.map(p => [p.lat, p.lon]);
-        const first = ring[0], last = ring[ring.length - 1];
-        if (first[0] !== last[0] || first[1] !== last[1]) ring.push(first);
-        let minLat=+Infinity, minLon=+Infinity, maxLat=-Infinity, maxLon=-Infinity;
-        for (const [la,lo] of ring) { if (la<minLat) minLat=la; if (la>maxLat) maxLat=la; if (lo<minLon) minLon=lo; if (lo>maxLon) maxLon=lo; }
-        const cLat=(minLat+maxLat)/2, cLon=(minLon+maxLon)/2;
-        const d = dist2(cLat, cLon, lat, lon);
-        if (d < bestD) { bestD = d; best = ring; }
+          if (!resp.ok) {
+            if (resp.status === 429 || (resp.status >= 500 && resp.status < 600)) {
+              await new Promise(r=>setTimeout(r, 800 + 400*tryN));
+              continue;
+            }
+            continue;
+          }
+
+          const data = await resp.json();
+          if (!Array.isArray(data.elements) || !data.elements.length) continue;
+
+          function dist2(aLat, aLon, bLat, bLon) {
+            const dLat = (aLat - bLat), dLon = (aLon - bLon);
+            return dLat*dLat + dLon*dLon;
+          }
+          let best = null, bestD = Infinity;
+          for (const el of data.elements) {
+            if ((el.type === 'way' || el.type === 'relation') && Array.isArray(el.geometry) && el.geometry.length >= 4) {
+              const ring = el.geometry.map(p => [p.lat, p.lon]);
+              const first = ring[0], last = ring[ring.length - 1];
+              if (first[0] !== last[0] || first[1] !== last[1]) ring.push(first);
+              let minLat=+Infinity, minLon=+Infinity, maxLat=-Infinity, maxLon=-Infinity;
+              for (const [la,lo] of ring) { if (la<minLat) minLat=la; if (la>maxLat) maxLat=la; if (lo<minLon) minLon=lo; if (lo>maxLon) maxLon=lo; }
+              const cLat=(minLat+maxLat)/2, cLon=(minLon+maxLon)/2;
+              const d = dist2(cLat, cLon, lat, lon);
+              if (d < bestD) { bestD = d; best = ring; }
+            }
+          }
+          if (best) return best;
+        } catch (e) {
+          await new Promise(r=>setTimeout(r, 600));
+        }
       }
     }
-    return best || null;
+    return null;
   }
 
   // ===== Подписи компаний =====
@@ -692,19 +726,32 @@
           const ringLatLng = res.polygon.map(([lon,lat])=>[lat,lon]);
           poly = L.polygon(ringLatLng, { color: color, weight: 2, fillColor: color, fillOpacity: 0.9 }).addTo(map);
           latlng = poly.getBounds().getCenter();
+          console.debug('overpass:', item.address, 'polygon(photon)');
         } else if(res.point){
           const [lon, lat] = res.point;
           let ring = null;
-          try { ring = await fetchBuildingPolygon({ lon, lat }); } catch(e){ console.warn('Overpass fail', e); }
+          try {
+            // 1-я попытка R=500
+            ring = await fetchBuildingPolygon({ lon, lat }, 500);
+            // если не нашли — подождать и попробовать шире
+            if (!ring) {
+              await new Promise(r=>setTimeout(r,700));
+              ring = await fetchBuildingPolygon({ lon, lat }, 800);
+            }
+          } catch(e){
+            console.warn('Overpass fail', e);
+          }
           if (ring && ring.length >= 4) {
             poly = L.polygon(ring, { color: color, weight: 2, fillColor: color, fillOpacity: 0.9 }).addTo(map);
             latlng = poly.getBounds().getCenter();
+            console.debug('overpass:', item.address, 'polygon');
           } else {
             const sq = squareAround([lon,lat], 30).map(([la,lo])=>[la,lo]);
             poly = L.polygon(sq, { color: color, weight: 2, fillColor: color, fillOpacity: 0.9 }).addTo(map);
             const dot  = L.circleMarker([lat,lon], { radius: 4, color: '#fff', weight: 2, fillColor: color, fillOpacity: 1 }).addTo(map);
             state.layers.push(dot);
             latlng = [lat,lon];
+            console.debug('overpass:', item.address, 'square');
           }
         }
 
@@ -741,7 +788,9 @@
           state.items.push({address:item.address, company:item.company||'', entrances, lat:null, lon:null});
         }
         addListItem({...item, color, entrances});
-        await new Promise(r=>setTimeout(r,160));
+
+        // пауза между адресами (было 160)
+        await new Promise(r=>setTimeout(r,350));
       }catch(e){
         console.warn('Ошибка геокодинга', item.address, e);
         state.items.push({address:item.address, company:item.company||'', entrances, lat:null, lon:null});
