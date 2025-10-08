@@ -262,7 +262,6 @@
       chip.textContent = city;
       chip.onclick = ()=>{
         if(state.cityFilter.has(key)) state.cityFilter.delete(key); else state.cityFilter.add(key);
-        // если пусто — это «Все»
         if(state.cityFilter.size===0) { /* all */ }
         applyCityFilter(); renderList(); renderCityChips();
       };
@@ -376,7 +375,7 @@
     return null;
   }
 
-  // --- Загрузка базы (GitHub Pages-friendly, без кэша)
+  // --- Загрузка базы
   function normalizeDb(j){
     return {
       version: j.version||1,
@@ -397,7 +396,7 @@
     renderAll();
   }
 
-  // --- GitHub API (опциональный прямой коммит)
+  // --- GitHub API (прямой коммит)
   function parseGhFromHash(){
     const h = new URLSearchParams(location.hash.slice(1));
     const gh = h.get('gh'); const token = h.get('token');
@@ -407,6 +406,11 @@
     const [branch, ...pathParts] = (bp||'main:database.json').split(':');
     const path = pathParts.join(':') || 'database.json';
     return { repo: repoPart, branch, path, token };
+  }
+
+  function encodePathForContentsAPI(path){
+    // Нельзя encodeURIComponent всего path — слеши должны остаться слешами.
+    return path.split('/').map(encodeURIComponent).join('/');
   }
 
   function toBase64Unicode(str){
@@ -420,10 +424,9 @@
   }
 
   async function ghGetSha({repo,branch,path,token}){
-    const url = `https://api.github.com/repos/${repo}/contents/${encodeURIComponent(path)}?ref=${encodeURIComponent(branch)}`;
+    const url = `https://api.github.com/repos/${repo}/contents/${encodePathForContentsAPI(path)}?ref=${encodeURIComponent(branch)}`;
     const r = await fetch(url, {
       method: 'GET',
-      mode: 'cors',
       headers:{
         'Authorization':`Bearer ${token}`,
         'Accept':'application/vnd.github+json',
@@ -433,22 +436,21 @@
     if(r.status===404) return null;
     if(!r.ok){
       const t = await r.text().catch(()=> '');
-      throw new Error(`GitHub GET ${r.status} ${t}`);
+      throw new Error(`GitHub GET ${r.status}: ${t}`);
     }
     const j = await r.json(); return j.sha || null;
   }
 
   async function ghPut({repo,branch,path,token}, content, sha){
-    const url = `https://api.github.com/repos/${repo}/contents/${encodeURIComponent(path)}`;
+    const url = `https://api.github.com/repos/${repo}/contents/${encodePathForContentsAPI(path)}`;
     const body = {
       message:`update ${path} via leaflet`,
       branch,
       content: toBase64Unicode(content),
-      sha: sha || undefined
+      ...(sha ? { sha } : {}) // sha только если есть
     };
     const r = await fetch(url, {
       method: 'PUT',
-      mode: 'cors',
       headers:{
         'Authorization':`Bearer ${token}`,
         'Accept':'application/vnd.github+json',
@@ -458,20 +460,35 @@
       body: JSON.stringify(body)
     });
     if(!r.ok){
-      let txt=''; try{ txt=await r.text(); }catch(_){}
-      throw new Error(`GitHub PUT ${r.status}: ${txt || 'Failed to save'}`);
+      const txt = await r.text().catch(()=> '');
+      const err = new Error(`GitHub PUT ${r.status}: ${txt || 'Failed to save'}`);
+      err._status = r.status;
+      throw err;
     }
     return await r.json();
   }
 
   async function saveDb(){
     const content = JSON.stringify({ ...state.db, updated_at:new Date().toISOString() }, null, 2);
+
     if(state.gh){
-      const sha = await ghGetSha(state.gh);
-      const res = await ghPut(state.gh, content, sha);
-      return `Готово: коммит ${res.commit?.sha?.slice(0,7) || ''} в ${state.gh.repo}/${state.gh.branch}`;
+      // 1-й заход: получить sha и сохранить
+      let sha = await ghGetSha(state.gh);
+      try{
+        const res = await ghPut(state.gh, content, sha || undefined);
+        return `Готово: коммит ${res.commit?.sha?.slice(0,7) || ''} в ${state.gh.repo}/${state.gh.branch}`;
+      }catch(e){
+        // Если конфликт — повторить ещё раз с актуальным sha
+        if(e?._status === 409){
+          sha = await ghGetSha(state.gh);
+          const res = await ghPut(state.gh, content, sha || undefined);
+          return `Готово: коммит ${res.commit?.sha?.slice(0,7) || ''} (после обновления sha)`;
+        }
+        throw e;
+      }
     }
-    // fallback: скачать файл
+
+    // fallback: скачать файл локально
     const blob = new Blob([content], {type:'application/json;charset=utf-8'});
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'database.json'; a.click(); URL.revokeObjectURL(a.href);
     throw new Error('Скачан обновлённый database.json — замени его в репозитории.');
