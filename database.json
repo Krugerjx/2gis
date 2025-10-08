@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2025-10-08T18:31:41.852Z",
+  "updated_at": "2025-10-08T18:33:55.842Z",
   "items": [
     {
       "id": "d2052231-ef31-4ba2-a4d7-0a8db709dc2a",
@@ -445,7 +445,7 @@
       "id": "db77443d-b0f8-4ffb-a452-b689ac43cf03",
       "title": "г. Саратов, ул. 1 Кавказский тупик, 6",
       "city": "Саратов",
-      "polygon": []
+      "polygon": null
     },
     {
       "id": "c320f30d-cf8d-4b4c-9d6a-dac3e0e80ab1",
