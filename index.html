@@ -30,7 +30,7 @@
     .color-picker { position: absolute; display: none; background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 8px; box-shadow: 0 10px 24px rgba(0,0,0,.15); z-index: 9999; grid-template-columns: repeat(10, 22px); gap: 6px; }
     .color-cell { width: 22px; height: 22px; border-radius: 6px; border: 1px solid rgba(0,0,0,.2); cursor: pointer; }
 
-    /* Номера домов — компактные, «прижаты» к контуру */
+    /* Номера домов — компактные */
     .house-label { background: transparent; border: none; transform: translate(-50%, -50%); pointer-events: none; }
     .house-label .hl { display: inline-block; padding: 0 3px; font-size: 9px; font-weight: 700; background: rgba(255,255,255,.96); border: 2px solid var(--hl-color, rgba(0,0,0,.25)); border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,.10); line-height: 1.1; white-space: nowrap; user-select: none; }
 
@@ -52,10 +52,10 @@
         <button id="btnLoadJsonFile">Загрузить JSON</button>
       </div>
       <div class="row" style="margin-top:8px;">
-        <input type="url" id="jsonUrl" placeholder="https://raw.githubusercontent.com/owner/repo/branch/path/base.json" style="flex:1;" />
+        <input type="url" id="jsonUrl" placeholder="https://raw.githubusercontent.com/owner/repo/branch/path/database.json" style="flex:1;" />
         <button id="btnLoadJsonUrl">Загрузить по URL</button>
       </div>
-      <div class="hint" style="margin-top:6px;">Можно открыть со строкой запроса: <code>?data=&lt;raw_json_url&gt;</code> — база подгрузится автоматически.</div>
+      <div class="hint" style="margin-top:6px;">По умолчанию подгружается <code>./database.json</code> (рядом с index.html). Также работает параметр: <code>?data=&lt;raw_json_url&gt;</code>.</div>
     </div>
 
     <div class="panel">
@@ -69,9 +69,20 @@
       <div id="itemsList"></div>
     </div>
 
+    <!-- Новая панель: Добавить запись -->
+    <div class="panel">
+      <div style="font-weight:600; margin-bottom:6px;">Добавить запись в базу</div>
+      <div class="row"><input id="newTitle" type="text" placeholder="Название для UI (г. Саратов, Рахова 169/171)" style="flex:1"></div>
+      <div class="row"><input id="newCity" type="text" placeholder="Город" style="flex:1"></div>
+      <div class="row"><input id="newCompany" type="text" placeholder="Компания" style="flex:1"></div>
+      <div class="row"><input id="newStatus" type="text" placeholder="Статус (опц.)" style="flex:1"></div>
+      <div class="row"><button id="btnAddItem" class="pill">Добавить</button></div>
+      <div class="hint">Полигон привяжи позже: выбери запись → «Режим привязки» → клик по карте.</div>
+    </div>
+
     <div class="panel">
       <div style="font-weight:600; margin-bottom:6px;">Привязка/коррекция полигона</div>
-      <div class="muted">1) Выбери запись в списке → 2) Нажми «Режим привязки» → 3) Кликни по карте рядом с домом → 4) Подтверди сохранение.</div>
+      <div class="muted">1) Выбери запись в списке → 2) «Режим привязки» → 3) Кликни по карте рядом с домом → 4) «Сохранить найденный контур в базу».</div>
       <div class="row" style="margin-top:8px;">
         <button id="btnAttachMode">Режим привязки</button>
         <button id="btnCancelAttach">Отмена</button>
@@ -86,7 +97,7 @@
       <div style="font-weight:600; margin-bottom:6px;">Сохранение в GitHub (опционально)</div>
       <div class="row"><input type="text" id="ghRepo" placeholder="owner/repo" style="flex:1"></div>
       <div class="row"><input type="text" id="ghBranch" placeholder="ветка (main)" value="main" style="flex:1"></div>
-      <div class="row"><input type="text" id="ghPath" placeholder="path/to/base.json" style="flex:1"></div>
+      <div class="row"><input type="text" id="ghPath" placeholder="path/to/database.json" style="flex:1"></div>
       <div class="row"><input type="password" id="ghToken" placeholder="GitHub PAT (scope: repo)" style="flex:1"></div>
       <div class="row">
         <button id="btnSaveGitHub" class="pill">Записать в GitHub</button>
@@ -103,7 +114,7 @@
   <div id="map"></div>
 </div>
 
-<!-- Палитра -->
+<!-- Палитра (пока не используем, оставил для будущего) -->
 <div id="colorPicker" class="color-picker" role="dialog" aria-hidden="true"></div>
 
 <script>
@@ -112,18 +123,15 @@
   const map = L.map('map').setView([51.533, 46.033], 12);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 20, attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
 
-  const $ = (s)=>document.querySelector(s);
   const byId = (id)=>document.getElementById(id);
 
   // ===== Состояние =====
   const state = {
     db: {version:1, updated_at:new Date().toISOString(), items:[]}, // JSON база
-    features: new Map(), // id -> Leaflet layer (polygon)
+    features: new Map(), // id -> Leaflet polygon
     selectedId: null,
     attachMode: false,
-    attachPreview: null, // Leaflet layer временного предварительного контура
-    layers: [],
-    labelEntries: [],
+    attachPreview: null, // предварительный контур
     numberMarkers: [],
     bounds: L.latLngBounds(),
     companyColors: new Map()
@@ -157,17 +165,14 @@
 
   // ===== Утилиты =====
   function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function lonlatRingToLatlng(ring){ return ring.map(([x,y])=>[y,x]); }
 
   function clearMap(){
     state.features.forEach(l => map.removeLayer(l));
-    state.layers.forEach(l => map.removeLayer(l));
     state.numberMarkers.forEach(m => map.removeLayer(m));
-    state.features.clear(); state.layers=[]; state.labelEntries=[];
-    state.numberMarkers=[]; state.bounds = L.latLngBounds();
-  }
-
-  function lonlatRingToLatlng(ring){ // [ [lon,lat], ... ] -> [ [lat,lon], ... ]
-    return ring.map(([x,y])=>[y,x]);
+    state.features.clear();
+    state.numberMarkers = [];
+    state.bounds = L.latLngBounds();
   }
 
   function drawItem(it){
@@ -177,9 +182,7 @@
     const poly = L.polygon(latlngs, { color, weight:2, fillColor:color, fillOpacity:0.9 }).addTo(map);
     poly.on('click', ()=>{ state.selectedId = it.id; renderList(); });
     state.features.set(it.id, poly);
-    state.layers.push(poly);
     state.bounds.extend(poly.getBounds());
-    // номер дома по краю
     placeLabelAtBuilding(poly, it);
   }
 
@@ -213,7 +216,7 @@
     if(layer){ map.fitBounds(layer.getBounds().pad(0.3)); }
   }
 
-  // ===== Номера домов (как у тебя) =====
+  // ===== Номера/ярлыки на домах =====
   function extractHouseFromTitle(t){
     const s = String(t||'').trim();
     const m = s.match(/,\s*([^,]+)\s*$/);
@@ -231,19 +234,13 @@
     const b = layer.getBounds();
     const midLat = (b.getNorth()+b.getSouth())/2;
     const midLng = (b.getEast()+b.getWest())/2;
-    const candidates = [
-      {anchor: L.latLng(b.getNorth(), midLng), off:[0,-12]},
-      {anchor: L.latLng(midLat, b.getEast()),  off:[+12,0]},
-      {anchor: L.latLng(midLat, b.getWest()),  off:[-12,0]},
-      {anchor: L.latLng(b.getSouth(), midLng), off:[0,+12]},
-    ];
-    const pos = latLngWithPixelOffset(candidates[0].anchor, candidates[0].off[0], candidates[0].off[1]);
+    const pos = latLngWithPixelOffset(L.latLng(b.getNorth(), midLng), 0, -12);
     const html = `<span class="hl" style="--hl-color:${color}">${escapeHtml(text)}</span>`;
     const icon = L.divIcon({ className:'house-label', html, iconSize: null });
     const mk = L.marker(pos, { icon, interactive:false, keyboard:false }).addTo(map);
     state.numberMarkers.push(mk);
   }
-  map.on('zoomend moveend', ()=>{ // перестроить подписи по движению
+  map.on('zoomend moveend', ()=>{ // обновить подписи
     state.numberMarkers.forEach(m => map.removeLayer(m));
     state.numberMarkers = [];
     state.db.items.forEach(it=>{
@@ -335,18 +332,43 @@
 
   byId('btnSavePreview').onclick = ()=>{
     if(!state.attachPreview || !state.selectedId){ alert('Нет предварительного контура или записи.'); return; }
-    // забираем latlngs из preview → переводим в [lon,lat] для JSON
     const latlngs = state.attachPreview.getLatLngs()[0]; // внешний контур
-    const ringLonLat = latlngs.map(p=>[p.lng, p.lat]);
+    const ringLonLat = latlngs.map(p=>[p.lng, p.lat]);   // [lon,lat] для JSON
     const it = state.db.items.find(x=>x.id===state.selectedId);
     if(!it){ alert('Запись не найдена.'); return; }
     it.polygon = ringLonLat;
     state.db.updated_at = new Date().toISOString();
-    // перерисовать
     renderAll();
     state.attachMode = false;
     clearPreview();
     byId('attachStatus').textContent = 'Сохранено в локальной базе. Нажми Download JSON или «Записать в GitHub».';
+  };
+
+  // ===== Добавление записи =====
+  function addItemToDb({title, city, company, status}){
+    const it = {
+      id: (crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()),
+      title: (title||'').trim(),
+      city: (city||'').trim(),
+      company: (company||'').trim(),
+      status: (status||'').trim(),
+      meta: {},
+      polygon: null
+    };
+    state.db.items.push(it);
+    state.db.updated_at = new Date().toISOString();
+    state.selectedId = it.id;
+    renderAll();
+  }
+  byId('btnAddItem').onclick = ()=>{
+    addItemToDb({
+      title: byId('newTitle').value,
+      city: byId('newCity').value,
+      company: byId('newCompany').value,
+      status: byId('newStatus').value
+    });
+    byId('newTitle').value = byId('newCity').value =
+    byId('newCompany').value = byId('newStatus').value = '';
   };
 
   // ===== Загрузка/сохранение базы =====
@@ -355,7 +377,7 @@
     out.version = j.version || 1;
     out.updated_at = new Date().toISOString();
     out.items = Array.isArray(j.items) ? j.items.map(x=>({
-      id: String(x.id || crypto.randomUUID()),
+      id: String(x.id || (crypto && crypto.randomUUID ? crypto.randomUUID() : Date.now())),
       title: x.title || '',
       city: x.city || '',
       company: x.company || '',
@@ -382,7 +404,7 @@
     const blob = new Blob([JSON.stringify(state.db,null,2)], {type:'application/json;charset=utf-8'});
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `addresses_${new Date().toISOString().slice(0,10)}.json`;
+    a.download = `database_${new Date().toISOString().slice(0,10)}.json`;
     a.click(); URL.revokeObjectURL(a.href);
   }
 
@@ -399,10 +421,19 @@
   byId('btnDownloadJson').onclick = downloadDb;
   byId('btnFit').onclick = ()=>{ if(state.bounds.isValid()) map.fitBounds(state.bounds.pad(0.15)); };
 
-  // Автозагрузка ?data=
-  const params = new URLSearchParams(location.search);
-  const dataUrl = params.get('data');
-  if(dataUrl){ loadJsonFromUrl(dataUrl).catch(e=>console.warn('auto-load error', e)); }
+  // ===== Автозагрузка базы: ?data=<url> или ./database.json по умолчанию
+  (async ()=>{
+    const params = new URLSearchParams(location.search);
+    const dataUrl = params.get('data');
+
+    if (dataUrl) {
+      try { await loadJsonFromUrl(dataUrl); return; }
+      catch(e){ console.warn('auto-load (?data) error', e); }
+    }
+
+    try { await loadJsonFromUrl('database.json'); }
+    catch(e){ console.warn('No local database.json found', e); }
+  })();
 
   // ===== GitHub save (опционально) =====
   async function ghGetSha(repo, branch, path, token){
