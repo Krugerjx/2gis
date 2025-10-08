@@ -3,30 +3,30 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Карта монтажа — база JSON + привязка контуров (Leaflet/OSM)</title>
+  <title>Карта монтажа — база JSON, редактирование и привязка (Leaflet)</title>
 
   <!-- Leaflet -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
   <style>
-    html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
-    #app { display: grid; grid-template-columns: 430px 1fr; height: 100%; }
+    html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; }
+    #app { display: grid; grid-template-columns: 460px 1fr; height: 100%; }
     #sidebar { padding: 14px; border-right: 1px solid #eee; overflow: auto; }
     #map { width: 100%; height: 100%; }
     .panel { background: #fafafa; border: 1px solid #eaeaea; border-radius: 12px; padding: 12px; margin-bottom: 12px; }
     .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-    .row input, .row button, textarea { font-size: 14px; }
-    input[type="text"], input[type="url"], input[type="password"], select, textarea { padding: 8px; border: 1px solid #e5e7eb; border-radius: 8px; }
+    .row input, .row button, textarea, select { font-size: 14px; }
+    input[type="text"], input[type="url"], input[type="password"], textarea, select { padding: 8px; border: 1px solid #e5e7eb; border-radius: 8px; }
     .item { padding: 8px 10px; border-radius: 10px; border: 1px dashed #ddd; margin-bottom: 6px; cursor: pointer; }
-    .item.active{ background:#fff6e5; }
-    .muted { color: #666; font-size: 13px; }
-    .pill { padding: 2px 6px; border-radius: 999px; font-size: 12px; background: #f1f5f9; border: 1px solid #e5e7eb; }
-    .tip { font-size: 12px; color:#64748b; }
-
-    /* Номера домов — компактные */
-    .house-label { background: transparent; border: none; transform: translate(-50%, -50%); pointer-events: none; }
-    .house-label .hl { display: inline-block; padding: 0 3px; font-size: 9px; font-weight: 700; background: rgba(255,255,255,.96); border: 2px solid var(--hl-color, rgba(0,0,0,.25)); border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,.10); line-height: 1.1; white-space: nowrap; user-select: none; }
+    .item.active { background:#fff6e5; }
+    .muted { color:#667085; font-size:13px; }
+    .pill { padding: 2px 6px; border-radius: 999px; font-size: 12px; background:#f1f5f9; border:1px solid #e5e7eb; }
+    .hint { font-size:12px; color:#475569; }
+    .house-label { background:transparent; border:none; transform:translate(-50%, -50%); pointer-events:none; }
+    .house-label .hl { display:inline-block; padding:0 3px; font-size:9px; font-weight:700; background:rgba(255,255,255,.96); border:2px solid var(--hl-color, rgba(0,0,0,.25)); border-radius:6px; box-shadow:0 1px 3px rgba(0,0,0,.10); line-height:1.1; white-space:nowrap; user-select:none; }
+    .danger { color:#b42318; }
+    .ok { color:#067647; }
   </style>
 </head>
 <body>
@@ -34,9 +34,11 @@
   <div id="sidebar">
     <div class="panel">
       <div style="font-weight:700;">База адресов (JSON) → Leaflet</div>
-      <div class="muted">Файл <code>database.json</code> лежит рядом с этой страницей и подгружается автоматически (или через <code>?data=</code>). Компании в базе не храним — их назначим в «наряде».</div>
+      <div class="muted">Автозагрузка <code>./database.json</code> (или <code>?data=</code>). Компаний в базе нет — их назначим в наряде.</div>
+      <div id="loadMsg" class="muted" style="margin-top:6px;"></div>
     </div>
 
+    <!-- Загрузка/сохранение базы -->
     <div class="panel">
       <div style="font-weight:600; margin-bottom:6px;">Загрузка/сохранение базы</div>
       <div class="row">
@@ -44,46 +46,61 @@
         <button id="btnLoadJsonFile">Загрузить JSON</button>
       </div>
       <div class="row" style="margin-top:8px;">
-        <input type="url" id="jsonUrl" placeholder="https://raw.githubusercontent.com/owner/repo/branch/path/database.json" style="flex:1;" />
+        <input type="url" id="jsonUrl" placeholder="https://raw.githubusercontent.com/owner/repo/branch/path/database.json" style="flex:1" />
         <button id="btnLoadJsonUrl">Загрузить по URL</button>
       </div>
       <div class="row" style="margin-top:8px;">
-        <button id="btnDownloadJson" class="pill">Download JSON</button>
+        <button id="btnDownloadJson" class="pill">Скачать JSON</button>
+        <button id="btnFit">Показать все</button>
       </div>
-      <div class="muted" id="loadMsg" style="margin-top:6px;"></div>
     </div>
 
+    <!-- Список -->
     <div class="panel">
       <div class="row" style="justify-content:space-between;">
         <div style="font-weight:600;">Записи базы</div>
         <div class="row">
-          <button id="btnFit">Показать все</button>
+          <span class="muted" id="countLbl"></span>
         </div>
       </div>
       <div id="itemsList"></div>
     </div>
 
-    <div class="panel">
-      <div style="font-weight:600; margin-bottom:6px;">Добавить запись</div>
-      <div class="row"><input id="newTitle" type="text" placeholder="Название (адрес для UI: г. Саратов, Рахова 169/171)" style="flex:1"></div>
-      <div class="row"><input id="newCity" type="text" placeholder="Город" style="flex:1"></div>
-      <div class="row"><input id="newStatus" type="text" placeholder="Статус (опц.)" style="flex:1"></div>
-      <div class="row"><input id="newHouse" type="text" placeholder="Дом / литера (опц.)" style="flex:1"></div>
-      <div class="row"><input id="newEntr" type="text" placeholder="Подъездов (опц.)" style="flex:1"></div>
-      <div class="row"><button id="btnAddItem" class="pill">Добавить</button></div>
-      <div class="tip">Полигон привяжешь потом: выбери запись → «Режим привязки» → клик по карте.</div>
+    <!-- Редактирование -->
+    <div class="panel" id="editPanel">
+      <div style="font-weight:600; margin-bottom:6px;">Редактирование записи</div>
+      <div class="muted" id="editHint">Выбери запись в списке слева.</div>
+      <div id="editForm" style="display:none;">
+        <div class="row"><input id="eTitle" type="text" placeholder="Название (адрес для UI)" style="flex:1"></div>
+        <div class="row"><input id="eCity" type="text" placeholder="Город" style="flex:1">
+          <select id="eStatus">
+            <option value="">Статус (опц.)</option>
+            <option value="план">план</option>
+            <option value="в работе">в работе</option>
+            <option value="готово">готово</option>
+          </select>
+        </div>
+        <div class="row">
+          <input id="eHouse" type="text" placeholder="Дом / литера (опц.)" style="flex:1">
+          <input id="eEntr" type="text" placeholder="Подъездов (опц.)" style="width:140px">
+        </div>
+        <div class="row" style="margin-top:6px;">
+          <button id="btnEditSave" class="pill">Сохранить</button>
+          <button id="btnEditRelink">Перепривязать полигон</button>
+          <button id="btnEditClearPoly">Удалить полигон</button>
+        </div>
+        <div class="row" style="margin-top:6px;">
+          <button id="btnEditSaveGit" class="pill">Сохранить + GitHub</button>
+          <span id="editMsg" class="muted"></span>
+        </div>
+      </div>
     </div>
 
+    <!-- Выбор / наряд -->
     <div class="panel">
       <div style="font-weight:600; margin-bottom:6px;">Выбор домов / наряд</div>
-      <label class="row" style="gap:6px; margin-bottom:6px;">
-        <input type="checkbox" id="chkSelectMode" />
-        Режим выбора домов
-      </label>
-      <label class="row" style="gap:6px; margin-bottom:6px;">
-        <input type="checkbox" id="chkOnlySel" />
-        Показывать на карте только выбранные
-      </label>
+      <label class="row" style="gap:6px; margin-bottom:6px;"><input type="checkbox" id="chkSelectMode" /> Режим выбора домов</label>
+      <label class="row" style="gap:6px; margin-bottom:6px;"><input type="checkbox" id="chkOnlySel" /> Показывать только выбранные</label>
       <div class="row" style="margin-bottom:8px;">
         <button id="btnSelectBox">Выделить прямоугольником</button>
         <button id="btnClearSel">Сбросить выделение</button>
@@ -92,32 +109,31 @@
         <button id="btnGenerate">Сгенерировать наряд (таблица)</button>
         <button id="btnExportMap">Экспорт карты (только выбранные)</button>
       </div>
-      <div class="tip" style="margin-top:6px;">В режиме выбора клик по дому — (де)выделение. Shift+перетаскивание — прямоугольник.</div>
+      <div class="hint" style="margin-top:6px;">Shift+перетаскивание — прямоугольное выделение.</div>
     </div>
 
+    <!-- Привязка -->
     <div class="panel">
-      <div style="font-weight:600; margin-bottom:6px;">Привязка/коррекция контура</div>
-      <div class="muted">1) Выбери запись в списке → 2) «Режим привязки» → 3) Клик по карте рядом с домом → 4) «Сохранить контур».</div>
-      <div class="row" style="margin-top:8px;">
-        <button id="btnAttachMode">Режим привязки</button>
-        <button id="btnCancelAttach">Отмена</button>
-      </div>
-      <div class="row" style="margin-top:8px;">
-        <button id="btnSavePreview" class="pill">Сохранить найденный контур в базу</button>
+      <div style="font-weight:600; margin-bottom:6px;">Привязка контура</div>
+      <div class="muted">Нажми «Перепривязать полигон» в редакторе, затем кликни по карте рядом с домом и подтверди.</div>
+      <div class="row" style="margin-top:6px;">
+        <button id="btnSavePreview" class="pill">Сохранить найденный контур</button>
+        <button id="btnCancelAttach">Отмена режима привязки</button>
       </div>
       <div id="attachStatus" class="muted" style="margin-top:6px;"></div>
     </div>
 
+    <!-- GitHub -->
     <div class="panel">
-      <div style="font-weight:600; margin-bottom:6px;">Сохранение в GitHub (опционально)</div>
+      <div style="font-weight:600; margin-bottom:6px;">GitHub (по желанию)</div>
       <div class="row"><input type="text" id="ghRepo" placeholder="owner/repo" style="flex:1"></div>
       <div class="row"><input type="text" id="ghBranch" placeholder="ветка (main)" value="main" style="flex:1"></div>
       <div class="row"><input type="text" id="ghPath" placeholder="path/to/database.json" style="flex:1"></div>
       <div class="row"><input type="password" id="ghToken" placeholder="GitHub PAT (scope: repo)" style="flex:1"></div>
       <div class="row">
         <button id="btnSaveGitHub" class="pill">Записать в GitHub</button>
+        <span id="ghMsg" class="muted"></span>
       </div>
-      <div id="ghMsg" class="muted" style="margin-top:6px;"></div>
     </div>
   </div>
 
@@ -126,520 +142,325 @@
 
 <script>
 (function(){
-  // ===== Карта =====
   const map = L.map('map').setView([51.533, 46.033], 12);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 20, attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:20, attribution:'&copy; OpenStreetMap contributors' }).addTo(map);
+  const $ = (id)=>document.getElementById(id);
+  const DEFAULT_COLOR = '#7c3aed';
 
-  const byId = (id)=>document.getElementById(id);
-
-  // ===== Состояние =====
   const state = {
     db: {version:1, updated_at:new Date().toISOString(), items:[]},
-    features: new Map(),   // id -> Leaflet polygon
+    features: new Map(), // id -> Leaflet polygon
     selectedId: null,
-    attachMode: false,
-    attachPreview: null,
+    selected: new Set(),
+    hidden: new Set(),
     numberMarkers: [],
     bounds: L.latLngBounds(),
-    selected: new Set(),
-    hidden: new Set()
+    attachMode: false,
+    attachPreview: null
   };
 
-  const DEFAULT_COLOR = '#7c3aed'; // единый цвет для домов
-
-  // ===== Утилиты =====
-  function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-  function lonlatRingToLatlng(ring){ return ring.map(([x,y])=>[y,x]); }
+  // ===== helpers
+  function esc(s){ return String(s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+  const lonlat2latlngRing = ring => ring.map(([x,y])=>[y,x]);
+  const latlng2lonlatRing = ring => ring.map(p=>[p.lng, p.lat]);
 
   function clearMap(){
-    state.features.forEach(l => map.removeLayer(l));
-    state.numberMarkers.forEach(m => map.removeLayer(m));
-    state.features.clear();
-    state.numberMarkers = [];
-    state.bounds = L.latLngBounds();
-  }
-
-  function addListItem(it){
-    const div = document.createElement('div');
-    div.className = 'item' + (state.selectedId===it.id?' active':'');
-    div.innerHTML = `
-      <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;">
-        <div style="font-weight:600">${escapeHtml(it.title || '(без названия)')}</div>
-        ${it.status ? `<span class="pill">${escapeHtml(it.status)}</span>` : ''}
-      </div>
-      <div class="muted">${escapeHtml(it.city || '')}</div>
-    `;
-    div.onclick = ()=>{ state.selectedId = it.id; renderList(); focusItem(it.id); };
-    byId('itemsList').appendChild(div);
+    state.features.forEach(l=>map.removeLayer(l));
+    state.numberMarkers.forEach(m=>map.removeLayer(m));
+    state.features.clear(); state.numberMarkers=[]; state.bounds=L.latLngBounds();
   }
 
   function renderList(){
-    const box = byId('itemsList'); box.innerHTML='';
-    state.db.items.forEach(addListItem);
+    const host = $('itemsList'); host.innerHTML='';
+    $('countLbl').textContent = state.db.items.length ? `${state.db.items.length}` : '';
+    state.db.items.forEach(it=>{
+      const div=document.createElement('div');
+      div.className='item' + (state.selectedId===it.id?' active':'');
+      div.innerHTML=`<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;">
+        <div style="font-weight:600">${esc(it.title||'(без названия)')}</div>
+        ${it.status?`<span class="pill">${esc(it.status)}</span>`:''}
+      </div>
+      <div class="muted">${esc(it.city||'')}${it.polygon?' • контур есть':''}</div>`;
+      div.onclick=()=>{ state.selectedId=it.id; renderList(); focusItem(it.id); fillEditForm(it); };
+      host.appendChild(div);
+    });
+    // показать/скрыть форму
+    const hasSel = !!state.selectedId;
+    $('editForm').style.display = hasSel ? '' : 'none';
+    $('editHint').style.display = hasSel ? 'none' : '';
   }
 
   function focusItem(id){
-    const layer = state.features.get(id);
-    if(layer){ map.fitBounds(layer.getBounds().pad(0.3)); }
+    const layer=state.features.get(id);
+    if(layer) map.fitBounds(layer.getBounds().pad(0.3));
   }
 
-  function extractHouseFromTitle(t){
-    const s = String(t||'').trim();
-    const m = s.match(/,\s*([^,]+)\s*$/);
-    if(m) return m[1].replace(/^(дом|д\.)\s*/i,'').trim();
-    const m2 = s.match(/(\d+[0-9A-Za-zА-Яа-я\/\-]*?)\s*$/);
-    return m2 ? m2[1] : s;
+  function extractHouse(title){
+    const s=String(title||'').trim();
+    const m=s.match(/,\s*([^,]+)\s*$/); if(m) return m[1].replace(/^(дом|д\.)\s*/i,'').trim();
+    const m2=s.match(/(\d+[0-9A-Za-zА-Яа-я\/\-]*?)\s*$/); return m2 ? m2[1] : s;
   }
-  function latLngWithPixelOffset(baseLatLng, dx, dy){
-    const p = map.latLngToLayerPoint(baseLatLng);
-    return map.layerPointToLatLng(L.point(p.x + dx, p.y + dy));
-  }
-  function placeLabelAtBuilding(layer, it){
-    const text = (it.meta?.house) || extractHouseFromTitle(it.title || it.city || '');
-    const b = layer.getBounds();
-    const midLat = (b.getNorth()+b.getSouth())/2;
-    const midLng = (b.getEast()+b.getWest())/2;
-    const pos = latLngWithPixelOffset(L.latLng(b.getNorth(), midLng), 0, -12);
-    const html = `<span class="hl" style="--hl-color:${DEFAULT_COLOR}">${escapeHtml(text)}</span>`;
-    const icon = L.divIcon({ className:'house-label', html, iconSize: null });
+
+  function placeHouseLabel(layer, text){
+    const b=layer.getBounds();
+    const mid = L.latLng(b.getNorth(), (b.getEast()+b.getWest())/2);
+    const pos = map.layerPointToLatLng(map.latLngToLayerPoint(mid).add([0,-12]));
+    const html = `<span class="hl" style="--hl-color:${DEFAULT_COLOR}">${esc(text)}</span>`;
+    const icon = L.divIcon({ className:'house-label', html, iconSize:null });
     const mk = L.marker(pos, { icon, interactive:false, keyboard:false }).addTo(map);
     state.numberMarkers.push(mk);
   }
-  map.on('zoomend moveend', ()=>{ // перестроить подписи
-    state.numberMarkers.forEach(m => map.removeLayer(m));
-    state.numberMarkers = [];
+
+  function rebuildLabels(){
+    state.numberMarkers.forEach(m=>map.removeLayer(m));
+    state.numberMarkers=[];
     state.db.items.forEach(it=>{
-      const layer = state.features.get(it.id);
-      if(layer) placeLabelAtBuilding(layer, it);
+      const l=state.features.get(it.id);
+      if(l && map.hasLayer(l)) placeHouseLabel(l, it.meta?.house || extractHouse(it.title));
     });
-  });
+  }
+  map.on('moveend zoomend', rebuildLabels);
 
   function drawItem(it){
-    if(!Array.isArray(it.polygon) || it.polygon.length < 3) return;
-    const latlngs = lonlatRingToLatlng(it.polygon);
-    const poly = L.polygon(latlngs, { color: DEFAULT_COLOR, weight:2, fillColor: DEFAULT_COLOR, fillOpacity:0.9 }).addTo(map);
-    poly.on('click', ()=> toggleLayerSelection(poly, it.id));
+    if(!Array.isArray(it.polygon) || it.polygon.length<3) return;
+    const ll = lonlat2latlngRing(it.polygon);
+    const poly = L.polygon(ll, { color:DEFAULT_COLOR, weight:2, fillColor:DEFAULT_COLOR, fillOpacity:.9 }).addTo(map);
+    poly.on('click', ()=>toggleLayerSelection(poly));
     poly._id = it.id;
     state.features.set(it.id, poly);
     state.bounds.extend(poly.getBounds());
-    placeLabelAtBuilding(poly, it);
+    placeHouseLabel(poly, it.meta?.house || extractHouse(it.title));
   }
 
   function renderAll(){
     clearMap();
-    for(const it of state.db.items){ drawItem(it); }
+    state.db.items.forEach(drawItem);
     if(state.bounds.isValid()) map.fitBounds(state.bounds.pad(0.15));
     renderList();
   }
 
-  // ===== Выбор домов / наряд =====
-  function inSelectMode(){ return byId('chkSelectMode').checked; }
-  function applySelectedStyle(layer){ layer.setStyle({ fillColor: DEFAULT_COLOR, color: '#111', weight: 4, dashArray: '6 3' }); }
-  function applyBaseStyle(layer){ layer.setStyle({ fillColor: DEFAULT_COLOR, color: DEFAULT_COLOR, weight: 2, dashArray: null }); }
+  // ===== selection / наряд
+  const inSelectMode = ()=>$('chkSelectMode').checked;
+  const applySel = l => l.setStyle({ fillColor:DEFAULT_COLOR, color:'#111', weight:4, dashArray:'6 3' });
+  const applyBase = l => l.setStyle({ fillColor:DEFAULT_COLOR, color:DEFAULT_COLOR, weight:2, dashArray:null });
 
-  function toggleLayerSelection(layer, id){
+  function toggleLayerSelection(layer){
     if(!inSelectMode()) return;
-    if(state.selected.has(layer)){
-      state.selected.delete(layer);
-      applyBaseStyle(layer);
-    } else {
-      state.selected.add(layer);
-      applySelectedStyle(layer);
-    }
-    updateOnlySelectedVisibility();
-    rebuildLabels();
+    if(state.selected.has(layer)){ state.selected.delete(layer); applyBase(layer); }
+    else { state.selected.add(layer); applySel(layer); }
+    updateOnlySelectedVisibility(); rebuildLabels();
   }
 
-  function rebuildLabels(){
-    state.numberMarkers.forEach(m => map.removeLayer(m));
-    state.numberMarkers = [];
-    state.db.items.forEach(it=>{
-      const l = state.features.get(it.id);
-      if(l && map.hasLayer(l)) placeLabelAtBuilding(l, it);
-    });
-  }
-
-  byId('chkOnlySel').addEventListener('change', updateOnlySelectedVisibility);
   function updateOnlySelectedVisibility(){
-    const only = byId('chkOnlySel').checked;
+    const only=$('chkOnlySel').checked;
     if(only){
-      for(const l of state.features.values()){
-        if(!state.selected.has(l) && map.hasLayer(l)){
-          map.removeLayer(l);
-          state.hidden.add(l);
-        }
-      }
-    } else {
+      for(const l of state.features.values()){ if(!state.selected.has(l) && map.hasLayer(l)){ map.removeLayer(l); state.hidden.add(l);} }
+    }else{
       for(const l of state.hidden){ if(!map.hasLayer(l)) l.addTo(map); }
       state.hidden.clear();
     }
     rebuildLabels();
   }
-
-  byId('btnClearSel').onclick = ()=>{
-    for(const l of state.selected) applyBaseStyle(l);
-    state.selected.clear();
-    updateOnlySelectedVisibility();
-  };
-  byId('btnSelectBox').onclick = ()=> alert('Удерживай Shift и перетаскивай мышкой по карте — дома в прямоугольнике будут выделены.');
-  map.on('boxzoomend', (e)=>{
+  $('chkOnlySel').addEventListener('change', updateOnlySelectedVisibility);
+  $('btnClearSel').onclick=()=>{ for(const l of state.selected) applyBase(l); state.selected.clear(); updateOnlySelectedVisibility(); };
+  $('btnSelectBox').onclick=()=>alert('Удерживай Shift и перетаскивай мышкой по карте — выделение прямоугольником.');
+  map.on('boxzoomend', e=>{
     if(!inSelectMode()) return;
-    const bounds = e.boxZoomBounds || e.bounds;
-    if(!bounds) return;
-    for(const l of state.features.values()){
-      if(l.getBounds && bounds.intersects(l.getBounds())){
-        state.selected.add(l);
-        applySelectedStyle(l);
-      }
-    }
+    const b=e.boxZoomBounds||e.bounds; if(!b) return;
+    for(const l of state.features.values()){ if(l.getBounds && b.intersects(l.getBounds())){ state.selected.add(l); applySel(l);} }
     updateOnlySelectedVisibility();
   });
 
-  function popupHtml({title, city, meta, lat, lon}){
-    const coord = (lat!=null&&lon!=null) ? `<div class='muted' style="margin-top:6px">${lat.toFixed(6)}, ${lon.toFixed(6)}</div>` : '';
-    const metaTxt = (meta?.house || meta?.entrances) ? `<div class='muted' style="margin-top:6px">${meta.house?`Дом: ${escapeHtml(meta.house)}`:''}${(meta.entrances&&meta.house)?' • ':''}${meta.entrances?`Подъездов: ${escapeHtml(String(meta.entrances))}`:''}</div>` : '';
-    return `<div style="font-weight:700; margin-bottom:4px;">${escapeHtml(title||'(без названия)')}</div>
-            <div class='muted'>${escapeHtml(city||'')}</div>${metaTxt}${coord}`;
-  }
-
   function coordsFromLatLngs(latlngs){
     if(Array.isArray(latlngs)){
-      if(latlngs.length && latlngs[0] && typeof latlngs[0].lat === 'number'){
-        return latlngs.map(p=>[p.lat, p.lng]);
-      } else {
-        return latlngs.map(coordsFromLatLngs);
-      }
+      if(latlngs.length && latlngs[0] && typeof latlngs[0].lat==='number') return latlngs.map(p=>[p.lat,p.lng]);
+      return latlngs.map(coordsFromLatLngs);
     }
     return latlngs;
   }
 
-  function exportSelectedMap(){
-    const sel = Array.from(state.selected);
-    if(sel.length===0){ alert('Не выбрано ни одного дома.'); return; }
+  $('btnExportMap').onclick = ()=>{
+    const sel=Array.from(state.selected); if(!sel.length){ alert('Не выбрано ни одного дома.'); return; }
     const features = sel.map(l=>{
-      const ll = l.getLatLngs ? l.getLatLngs() : [];
-      const it = state.db.items.find(x=>x.id===l._id) || {};
-      return {
-        title: it.title || '',
-        city: it.city || '',
-        status: it.status || '',
-        entrances: it.meta?.entrances || '',
-        house: it.meta?.house || '',
-        color: DEFAULT_COLOR,
-        latlngs: coordsFromLatLngs(ll)
-      };
+      const it = state.db.items.find(x=>x.id===l._id)||{};
+      return { title:it.title||'', house:it.meta?.house||'', entrances:it.meta?.entrances||'', color:DEFAULT_COLOR, latlngs:coordsFromLatLngs(l.getLatLngs()) };
     });
-    const html = `<!doctype html>
-<html><head><meta charset="utf-8">
-<title>Карта — выбранные дома</title>
+    const html=`<!doctype html><html><head><meta charset="utf-8"><title>Карта — выбранные дома</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<style>
-  html,body{height:100%;margin:0}
-  #wrap{display:grid;grid-template-columns:280px 1fr; height:100%;}
-  #side{padding:14px;border-right:1px solid #eee;overflow:auto;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
-  #mapx{height:100%;}
-  h1{font-size:18px;margin:0 0 10px;}
-  .muted{color:#64748b;font-size:12px;margin-bottom:12px}
-  .legend{display:grid;grid-template-columns:auto 1fr; gap:6px 8px; font-size:13px;}
-  .sw{width:16px;height:16px;border-radius:4px;border:1px solid rgba(0,0,0,.2)}
-  .addr{margin-bottom:6px;font-size:13px}
-  @media print{ .noprint{display:none} #wrap{grid-template-columns:0 1fr} #side{display:none} }
-
-  .house-label{background:transparent;border:none;transform:translate(-50%,-50%);pointer-events:none;}
-  .house-label .hl{
-    display:inline-block;padding:0 3px;font-size:11px;font-weight:700;
-    background:rgba(255,255,255,.96);border:2px solid var(--hl-color, rgba(0,0,0,.25));
-    border-radius:6px;box-shadow:0 1px 3px rgba(0,0,0,.10);line-height:1.1;white-space:nowrap;user-select:none;
-  }
-</style></head>
-<body>
-<div id="wrap">
-  <div id="side">
-    <h1>Выбранные дома</h1>
-    <div class="muted">На карте показаны только они. Можно распечатать (Ctrl/Cmd+P).</div>
-    <div id="list"></div>
-    <div class="noprint" style="margin-top:10px;"><button onclick="window.print()">Печать</button></div>
-  </div>
-  <div id="mapx"></div>
-</div>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"><\/script>
-<script>
-const data = ${JSON.stringify(features)};
-function toLatLngs(arr){ if(Array.isArray(arr)&&arr.length&&Array.isArray(arr[0])&&typeof arr[0][0]==='number'){ return arr.map(p=>L.latLng(p[0],p[1])); } return arr.map(toLatLngs); }
-function extractHouse(title){ const s=String(title||'').trim(); const m=s.match(/,\\s*([^,]+)\\s*$/); if(m) return m[1].replace(/^(дом|д\\.)\\s*/i,'').trim(); const m2=s.match(/(\\d+[0-9A-Za-zА-Яа-я\\/\\-]*?)\\s*$/); return m2?m2[1]:s;}
-const map = L.map('mapx').setView([51.533,46.033], 12);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:20,attribution:'&copy; OpenStreetMap'}).addTo(map);
-const bounds = L.latLngBounds(); const polys=[]; let labels=[];
-function placeLabel(layer, color, text){ const b=layer.getBounds(); const pos = map.layerPointToLatLng(map.latLngToLayerPoint(L.latLng(b.getNorth(),(b.getEast()+b.getWest())/2)).add([0,-12])); const html='<span class="hl" style="--hl-color:'+color+'">'+text.replace(/&/g,'&amp;').replace(/</g,'&lt;')+'</span>'; const icon=L.divIcon({className:'house-label',html,iconSize:null}); const mk=L.marker(pos,{icon,interactive:false}).addTo(map); labels.push(mk); }
-function rebuild(){ labels.forEach(m=>map.removeLayer(m)); labels=[]; polys.forEach(p=>placeLabel(p, p._color, p._house)); }
-data.forEach(f=>{ const latlngs=toLatLngs(f.latlngs); const poly=L.polygon(latlngs,{color:f.color,weight:2,fillColor:f.color,fillOpacity:0.9}).addTo(map); polys.push(poly); bounds.extend(poly.getBounds()); const house=f.house||extractHouse(f.title); poly._color=f.color; poly._house=house; placeLabel(poly,f.color,house); const div=document.createElement('div'); div.className='addr'; const meta=(f.house||f.entrances)?' — '+[f.house?('дом: '+f.house):'', f.entrances?('подъездов: '+f.entrances):''].filter(Boolean).join(' • '):''; div.innerHTML='<span class="sw" style="background:'+f.color+'"></span> '+(f.title||'')+meta; document.getElementById('list').appendChild(div); });
-if(bounds.isValid()) map.fitBounds(bounds.pad(0.15)); map.on('moveend zoomend', rebuild);
-<\/script>
-</body></html>`;
-    const w = window.open('', '_blank');
-    if(!w){ alert('Разреши всплывающие окна для экспорта карты.'); return; }
+<style>html,body{height:100%;margin:0}#wrap{display:grid;grid-template-columns:280px 1fr;height:100%}#side{padding:14px;border-right:1px solid #eee;overflow:auto;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}#mapx{height:100%}.house-label{background:transparent;border:none;transform:translate(-50%,-50%);pointer-events:none}.house-label .hl{display:inline-block;padding:0 3px;font-size:11px;font-weight:700;background:rgba(255,255,255,.96);border:2px solid var(--hl-color,rgba(0,0,0,.25));border-radius:6px;box-shadow:0 1px 3px rgba(0,0,0,.10);line-height:1.1;white-space:nowrap;user-select:none}</style></head>
+<body><div id="wrap"><div id="side"><h1 style="font-size:18px;margin:0 0 10px;">Выбранные дома</h1><div id="list"></div></div><div id="mapx"></div></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"><\/script><script>
+const data=${JSON.stringify(features)};
+function toLatLngs(a){if(Array.isArray(a)&&a.length&&Array.isArray(a[0])&&typeof a[0][0]==='number')return a.map(p=>L.latLng(p[0],p[1]));return a.map(toLatLngs)}
+const map=L.map('mapx').setView([51.533,46.033],12);L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:20,attribution:'&copy; OpenStreetMap'}).addTo(map);
+const bounds=L.latLngBounds();let labels=[];
+function placeLabel(layer,color,text){const b=layer.getBounds();const pos=map.layerPointToLatLng(map.latLngToLayerPoint(L.latLng(b.getNorth(),(b.getEast()+b.getWest())/2)).add([0,-12]));const icon=L.divIcon({className:'house-label',html:'<span class="hl" style="--hl-color:'+color+'">'+text.replace(/&/g,'&amp;').replace(/</g,'&lt;')+'</span>'});const mk=L.marker(pos,{icon,interactive:false}).addTo(map);labels.push(mk)}
+function rebuild(){labels.forEach(m=>map.removeLayer(m));labels=[];polys.forEach(p=>placeLabel(p,p._color,p._house))}
+const polys=[];data.forEach(f=>{const latlngs=toLatLngs(f.latlngs);const poly=L.polygon(latlngs,{color:f.color,weight:2,fillColor:f.color,fillOpacity:.9}).addTo(map);polys.push(poly);bounds.extend(poly.getBounds());const house=f.house||'';poly._color=f.color;poly._house=house;placeLabel(poly,f.color,house);const d=document.createElement('div');d.textContent=(f.title||'')+(house?(' — дом: '+house):'');document.getElementById('list').appendChild(d)});if(bounds.isValid())map.fitBounds(bounds.pad(.15));map.on('moveend zoomend',rebuild);
+<\/script></body></html>`;
+    const w=window.open('','_blank'); if(!w){ alert('Разреши всплывающие окна.'); return; }
     w.document.open(); w.document.write(html); w.document.close();
-  }
-  byId('btnExportMap').onclick = exportSelectedMap;
+  };
 
-  function generatePrint(){
-    const sel = Array.from(state.selected);
-    if(sel.length===0){ alert('Не выбрано ни одного дома.'); return; }
-    const rows = sel.map((l,i)=>{
-      const it = state.db.items.find(x=>x.id===l._id) || {};
-      return { n:i+1, title:it.title||'', house:it.meta?.house||'', entrances:it.meta?.entrances||'', city:it.city||'', status:it.status||'' };
-    });
-    const html = `<!doctype html>
-<html><head><meta charset="utf-8">
-<title>Наряд — выбранные адреса</title>
-<style>
-  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial; margin:24px;}
-  h1{font-size:20px;margin:0 0 12px;}
-  .muted{color:#64748b;font-size:12px;margin-bottom:12px}
-  table{border-collapse:collapse;width:100%;}
-  th,td{border:1px solid #e5e7eb;padding:6px 8px;font-size:13px;text-align:left;vertical-align:top;}
-  th{background:#f8fafc;}
-  .sw{display:inline-block;width:14px;height:14px;border:1px solid rgba(0,0,0,.25);border-radius:3px;margin-right:6px;}
-  @media print{ .noprint{display:none} }
-</style></head>
-<body>
-  <h1>Наряд — выбранные адреса</h1>
-  <div class="muted">Колонка «Компания» оставлена пустой умышленно — назначь при выдаче наряда.</div>
-  <table>
-    <thead><tr><th>№</th><th>Адрес (название)</th><th>Дом</th><th>Подъездов</th><th>Город</th><th>Статус</th><th>Компания</th></tr></thead>
-    <tbody>
-      ${rows.map(r=>`<tr>
-        <td>${r.n}</td>
-        <td>${escapeHtml(r.title)}</td>
-        <td>${escapeHtml(r.house||'')}</td>
-        <td>${escapeHtml(r.entrances||'')}</td>
-        <td>${escapeHtml(r.city||'')}</td>
-        <td>${escapeHtml(r.status||'')}</td>
-        <td></td>
-      </tr>`).join('')}
-    </tbody>
-  </table>
-  <div class="noprint" style="margin-top:12px;">
-    <button onclick="window.print()">Печать</button>
-  </div>
-</body></html>`;
-    const w = window.open('', '_blank');
-    if(!w){ alert('Разреши всплывающие окна для печати.'); return; }
+  $('btnGenerate').onclick = ()=>{
+    const sel=Array.from(state.selected); if(!sel.length){ alert('Не выбрано ни одного дома.'); return; }
+    const rows=sel.map((l,i)=>{ const it=state.db.items.find(x=>x.id===l._id)||{}; return {n:i+1,title:it.title||'',house:it.meta?.house||'',entr:it.meta?.entrances||'',city:it.city||'',status:it.status||''}; });
+    const html=`<!doctype html><html><head><meta charset="utf-8"><title>Наряд — выбранные адреса</title>
+<style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;margin:24px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #e5e7eb;padding:6px 8px;font-size:13px;text-align:left}th{background:#f8fafc}</style></head>
+<body><h1 style="font-size:20px;margin:0 0 12px;">Наряд — выбранные адреса</h1>
+<table><thead><tr><th>№</th><th>Адрес (название)</th><th>Дом</th><th>Подъездов</th><th>Город</th><th>Статус</th><th>Компания</th></tr></thead><tbody>
+${rows.map(r=>`<tr><td>${r.n}</td><td>${esc(r.title)}</td><td>${esc(r.house)}</td><td>${esc(r.entr)}</td><td>${esc(r.city)}</td><td>${esc(r.status)}</td><td></td></tr>`).join('')}
+</tbody></table></body></html>`;
+    const w=window.open('','_blank'); if(!w){ alert('Разреши всплывающие окна.'); return; }
     w.document.open(); w.document.write(html); w.document.close();
+  };
+
+  // ===== Edit form
+  function currentItem(){ return state.db.items.find(x=>x.id===state.selectedId) || null; }
+  function fillEditForm(it){
+    $('eTitle').value = it.title || '';
+    $('eCity').value = it.city || '';
+    $('eStatus').value = it.status || '';
+    $('eHouse').value = it.meta?.house || '';
+    $('eEntr').value = it.meta?.entrances || '';
+    $('editMsg').textContent='';
   }
-  byId('btnGenerate').onclick = generatePrint;
+  function applyEditForm(){
+    const it=currentItem(); if(!it) return;
+    it.title = $('eTitle').value.trim();
+    it.city  = $('eCity').value.trim();
+    it.status = $('eStatus').value.trim();
+    const h = $('eHouse').value.trim(); const e = $('eEntr').value.trim();
+    it.meta = { ...(it.meta||{}), house: h || undefined, entrances: e || undefined };
+    state.db.updated_at = new Date().toISOString();
+    renderAll();
+    $('editMsg').textContent = 'Сохранено локально.'; $('editMsg').className='muted ok';
+  }
+  $('btnEditSave').onclick = applyEditForm;
+  $('btnEditClearPoly').onclick = ()=>{
+    const it=currentItem(); if(!it) return;
+    it.polygon = null; state.db.updated_at=new Date().toISOString(); renderAll();
+    $('editMsg').textContent='Полигон удалён.'; $('editMsg').className='muted danger';
+  };
 
-  // ===== Привязка контура через Overpass =====
-  async function fetchOverpassPolygon({ lon, lat }, radius = 500) {
-    const ENDPOINTS = [
-      'https://overpass.kumi.systems/api/interpreter',
-      'https://overpass-api.de/api/interpreter',
-      'https://overpass.openstreetmap.ru/api/interpreter'
-    ];
-    const q = `
-      [out:json][timeout:60];
-      (
-        way["building"](around:${radius},${lat},${lon});
-        relation["building"](around:${radius},${lat},${lon});
-      );
-      out body geom;
-    `.trim();
-    for (const ep of ENDPOINTS) {
-      try {
-        const r = await fetch(ep, {
-          method: 'POST',
-          headers: {'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8'},
-          body: new URLSearchParams({ data: q })
-        });
-        if (!r.ok) continue;
-        const data = await r.json();
-        if (!Array.isArray(data.elements) || !data.elements.length) continue;
-
-        // ближайший к клику по центру bbox
+  // ===== Привязка контура (Overpass)
+  async function fetchOverpassPolygon({ lon, lat }, radius = 500){
+    const EPS=['https://overpass.kumi.systems/api/interpreter','https://overpass-api.de/api/interpreter','https://overpass.openstreetmap.ru/api/interpreter'];
+    const q=`[out:json][timeout:60];(way["building"](around:${radius},${lat},${lon});relation["building"](around:${radius},${lat},${lon}););out body geom;`;
+    for(const ep of EPS){
+      try{
+        const r=await fetch(ep,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8'},body:new URLSearchParams({data:q})});
+        if(!r.ok) continue; const j=await r.json(); const a=j.elements||[]; if(!a.length) continue;
         let best=null, bestD=Infinity;
-        for (const el of data.elements) {
-          const g = el.geometry;
-          if (!Array.isArray(g) || g.length<4) continue;
-          const ringLonLat = g.map(p=>[p.lon,p.lat]);
+        for(const el of a){
+          const g=el.geometry; if(!Array.isArray(g)||g.length<4) continue;
+          const ring=g.map(p=>[p.lon,p.lat]);
           let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
-          ringLonLat.forEach(([x,y])=>{ if(x<minX)minX=x; if(x>maxX)maxX=x; if(y<minY)minY=y; if(y>maxY)maxY=y; });
+          ring.forEach(([x,y])=>{ if(x<minX)minX=x; if(x>maxX)maxX=x; if(y<minY)minY=y; if(y>maxY)maxY=y; });
           const cx=(minX+maxX)/2, cy=(minY+maxY)/2;
           const d=(cx-lon)*(cx-lon)+(cy-lat)*(cy-lat);
-          if (d<bestD){bestD=d;best=ringLonLat;}
+          if(d<bestD){bestD=d;best=ring;}
         }
-        if (best) {
-          const f=best[0], l=best[best.length-1];
-          if (f[0]!==l[0] || f[1]!==l[1]) best.push([f[0],f[1]]);
-          return best;
-        }
-      } catch(e){ /* следующий эндпоинт */ }
+        if(best){ const f=best[0], l=best[best.length-1]; if(f[0]!==l[0]||f[1]!==l[1]) best.push([f[0],f[1]]); return best; }
+      }catch(e){ /* try next */ }
     }
     return null;
   }
-
-  function clearPreview(){
-    if(state.attachPreview){ map.removeLayer(state.attachPreview); state.attachPreview=null; }
-    byId('attachStatus').textContent='';
-  }
+  function clearPreview(){ if(state.attachPreview){ map.removeLayer(state.attachPreview); state.attachPreview=null; } $('attachStatus').textContent=''; }
   function showPreview(lonlatRing){
     clearPreview();
-    const latlngs = lonlatRingToLatlng(lonlatRing);
-    state.attachPreview = L.polygon(latlngs, { color:'#111', weight:2, fillColor: DEFAULT_COLOR, fillOpacity:0.5 }).addTo(map);
+    const latlngs = lonlat2latlngRing(lonlatRing);
+    state.attachPreview = L.polygon(latlngs,{color:'#111',weight:2,fillColor:DEFAULT_COLOR,fillOpacity:.5}).addTo(map);
     map.fitBounds(state.attachPreview.getBounds().pad(0.2));
   }
 
-  byId('btnAttachMode').onclick = ()=>{
-    if(!state.selectedId){ alert('Сначала выбери запись в списке.'); return; }
-    state.attachMode = true;
-    byId('attachStatus').textContent = 'Режим привязки активен: кликни по карте рядом со зданием.';
+  $('btnEditRelink').onclick = ()=>{
+    if(!state.selectedId){ alert('Выбери запись в списке.'); return; }
+    state.attachMode=true; $('attachStatus').textContent='Режим привязки: кликни по карте рядом с домом.';
   };
-  byId('btnCancelAttach').onclick = ()=>{
-    state.attachMode = false; clearPreview();
-  };
+  $('btnCancelAttach').onclick = ()=>{ state.attachMode=false; clearPreview(); };
 
   map.on('click', async (e)=>{
     if(!state.attachMode) return;
-    byId('attachStatus').textContent = 'Ищу ближайший контур здания…';
-    const { lat, lng } = e.latlng;
-    const ring = await fetchOverpassPolygon({ lon: lng, lat: lat }, 500);
-    if(!ring){ byId('attachStatus').textContent = 'Не нашёл контур. Кликни ближе к дому и повтори.'; return; }
+    $('attachStatus').textContent='Ищу ближайший контур здания…';
+    const ring = await fetchOverpassPolygon({ lon:e.latlng.lng, lat:e.latlng.lat }, 500);
+    if(!ring){ $('attachStatus').textContent='Не нашёл контур. Кликни точнее и повтори.'; return; }
     showPreview(ring);
-    byId('attachStatus').textContent = 'Контур найден. Нажми «Сохранить найденный контур в базу».';
+    $('attachStatus').textContent='Контур найден. Нажми «Сохранить найденный контур».';
   });
 
-  byId('btnSavePreview').onclick = ()=>{
+  $('btnSavePreview').onclick = ()=>{
     if(!state.attachPreview || !state.selectedId){ alert('Нет предварительного контура или записи.'); return; }
-    const latlngs = state.attachPreview.getLatLngs()[0];
-    const ringLonLat = latlngs.map(p=>[p.lng, p.lat]);   // [lon,lat] для JSON
-    const it = state.db.items.find(x=>x.id===state.selectedId);
-    if(!it){ alert('Запись не найдена.'); return; }
-    it.polygon = ringLonLat;
-    state.db.updated_at = new Date().toISOString();
-    renderAll();
-    state.attachMode = false;
-    clearPreview();
-    byId('attachStatus').textContent = 'Сохранено локально. Нажми Download JSON или «Записать в GitHub».';
+    const it=currentItem(); if(!it) return;
+    it.polygon = latlng2lonlatRing(state.attachPreview.getLatLngs()[0]);
+    state.db.updated_at=new Date().toISOString();
+    state.attachMode=false; clearPreview(); renderAll();
+    $('editMsg').textContent='Контур сохранён.'; $('editMsg').className='muted ok';
   };
 
-  // ===== Добавление записи =====
-  function addItemToDb({title, city, status, house, entrances}){
-    const it = {
-      id: (crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()),
-      title: (title||'').trim(),
-      city: (city||'').trim(),
-      status: (status||'').trim(),
-      meta: { house: (house||'').trim() || undefined, entrances: (entrances||'').trim() || undefined },
-      polygon: null
-    };
-    state.db.items.push(it);
-    state.db.updated_at = new Date().toISOString();
-    state.selectedId = it.id;
-    renderAll();
-  }
-  byId('btnAddItem').onclick = ()=>{
-    addItemToDb({
-      title: byId('newTitle').value,
-      city: byId('newCity').value,
-      status: byId('newStatus').value,
-      house: byId('newHouse').value,
-      entrances: byId('newEntr').value
-    });
-    ['newTitle','newCity','newStatus','newHouse','newEntr'].forEach(id=>byId(id).value='');
-  };
-
-  // ===== Загрузка/сохранение базы =====
+  // ===== загрузка/сохранение базы
   function normalizeDb(j){
-    const out = {version:1, updated_at:new Date().toISOString(), items:[]};
-    out.version = j.version || 1;
-    out.updated_at = new Date().toISOString();
-    out.items = Array.isArray(j.items) ? j.items.map(x=>({
-      id: String(x.id || (crypto && crypto.randomUUID ? crypto.randomUUID() : Date.now())),
-      title: x.title || '',
-      city: x.city || '',
-      status: x.status || '',
-      meta: x.meta || {},
-      polygon: Array.isArray(x.polygon) ? x.polygon : null
-    })) : [];
-    return out;
+    return {
+      version: j.version||1,
+      updated_at: new Date().toISOString(),
+      items: Array.isArray(j.items) ? j.items.map(x=>({
+        id: String(x.id || (crypto?.randomUUID?.() || Date.now())),
+        title: x.title||'',
+        city: x.city||'',
+        status: x.status||'',
+        meta: x.meta||{},
+        polygon: Array.isArray(x.polygon) ? x.polygon : null
+      })) : []
+    };
   }
   async function loadJsonFromUrl(url){
-    const r = await fetch(url, {headers:{'Accept':'application/json'}});
+    const r=await fetch(url,{headers:{'Accept':'application/json'}});
     if(!r.ok) throw new Error('HTTP '+r.status);
-    const j = await r.json();
-    state.db = normalizeDb(j);
+    state.db = normalizeDb(await r.json());
     renderAll();
   }
   async function loadJsonFromFile(file){
-    const text = await file.text();
-    const j = JSON.parse(text);
-    state.db = normalizeDb(j);
-    renderAll();
+    const j=JSON.parse(await file.text()); state.db=normalizeDb(j); renderAll();
   }
   function downloadDb(){
-    const blob = new Blob([JSON.stringify(state.db,null,2)], {type:'application/json;charset=utf-8'});
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `database_${new Date().toISOString().slice(0,10)}.json`;
-    a.click(); URL.revokeObjectURL(a.href);
+    const blob=new Blob([JSON.stringify(state.db,null,2)],{type:'application/json;charset=utf-8'});
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`database_${new Date().toISOString().slice(0,10)}.json`; a.click(); URL.revokeObjectURL(a.href);
   }
-  byId('btnLoadJsonFile').onclick = async ()=>{
-    const f = byId('jsonFile').files?.[0];
-    if(!f){ alert('Выбери JSON-файл.'); return; }
-    await loadJsonFromFile(f);
-  };
-  byId('btnLoadJsonUrl').onclick = async ()=>{
-    const u = byId('jsonUrl').value.trim();
-    if(!u){ alert('Введи URL сырого JSON (raw.githubusercontent.com/…)'); return; }
-    await loadJsonFromUrl(u);
-  };
-  byId('btnDownloadJson').onclick = downloadDb;
-  byId('btnFit').onclick = ()=>{ if(state.bounds.isValid()) map.fitBounds(state.bounds.pad(0.15)); };
+  $('btnLoadJsonFile').onclick=async()=>{ const f=$('jsonFile').files?.[0]; if(!f){ alert('Выбери JSON-файл.'); return; } await loadJsonFromFile(f); };
+  $('btnLoadJsonUrl').onclick=async()=>{ const u=$('jsonUrl').value.trim(); if(!u){ alert('Введи URL сырого JSON'); return; } await loadJsonFromUrl(u); };
+  $('btnDownloadJson').onclick=downloadDb;
+  $('btnFit').onclick=()=>{ if(state.bounds.isValid()) map.fitBounds(state.bounds.pad(0.15)); };
 
-  // ===== Автозагрузка: ?data=<url> или ./database.json
   (async ()=>{
-    const params = new URLSearchParams(location.search);
-    const dataUrl = params.get('data');
+    const p=new URLSearchParams(location.search).get('data');
     try{
-      if (dataUrl) { await loadJsonFromUrl(dataUrl); byId('loadMsg').textContent='Загружено из ?data='; return; }
-      await loadJsonFromUrl('database.json');
-      byId('loadMsg').textContent='Загружено: ./database.json';
-    } catch(e){
-      byId('loadMsg').textContent='База не найдена. Укажи URL или загрузи файл.';
-      console.warn('auto-load error', e);
-    }
+      if(p){ await loadJsonFromUrl(p); $('loadMsg').textContent='Загружено из ?data='; return; }
+      await loadJsonFromUrl('database.json'); $('loadMsg').textContent='Загружено: ./database.json';
+    }catch(e){ $('loadMsg').textContent='База не найдена. Укажи URL или загрузи файл.'; console.warn(e); }
   })();
 
-  // ===== GitHub save (опционально) =====
+  // ===== GitHub commit
   async function ghGetSha(repo, branch, path, token){
-    const url = `https://api.github.com/repos/${repo}/contents/${encodeURIComponent(path)}?ref=${encodeURIComponent(branch)}`;
-    const r = await fetch(url, {headers:{'Authorization':`Bearer ${token}`,'Accept':'application/vnd.github+json'}});
-    if(r.status===404) return null;
-    if(!r.ok) throw new Error('GET sha HTTP '+r.status);
-    const j = await r.json(); return j.sha || null;
+    const url=`https://api.github.com/repos/${repo}/contents/${encodeURIComponent(path)}?ref=${encodeURIComponent(branch)}`;
+    const r=await fetch(url,{headers:{'Authorization':`Bearer ${token}`,'Accept':'application/vnd.github+json'}}); if(r.status===404) return null;
+    if(!r.ok) throw new Error('GET '+r.status); const j=await r.json(); return j.sha||null;
   }
   async function ghPut(repo, branch, path, token, content, sha){
-    const url = `https://api.github.com/repos/${repo}/contents/${encodeURIComponent(path)}`;
-    const body = { message:`update ${path} via leaflet editor`, branch, content: btoa(unescape(encodeURIComponent(content))), sha: sha||undefined };
-    const r = await fetch(url, { method:'PUT', headers:{'Authorization':`Bearer ${token}`,'Accept':'application/vnd.github+json','Content-Type':'application/json'}, body: JSON.stringify(body) });
-    if(!r.ok) throw new Error('PUT HTTP '+r.status);
-    return await r.json();
+    const url=`https://api.github.com/repos/${repo}/contents/${encodeURIComponent(path)}`;
+    const body={message:`update ${path} via leaflet editor`,branch,content:btoa(unescape(encodeURIComponent(content))),sha:sha||undefined};
+    const r=await fetch(url,{method:'PUT',headers:{'Authorization':`Bearer ${token}`,'Accept':'application/vnd.github+json','Content-Type':'application/json'},body:JSON.stringify(body)});
+    if(!r.ok) throw new Error('PUT '+r.status); return await r.json();
   }
-  byId('btnSaveGitHub').onclick = async ()=>{
-    const repo = byId('ghRepo').value.trim();
-    const branch = byId('ghBranch').value.trim() || 'main';
-    const path = byId('ghPath').value.trim();
-    const token = byId('ghToken').value.trim();
-    byId('ghMsg').textContent = '';
-    if(!repo || !path || !token){ byId('ghMsg').textContent = 'Заполни owner/repo, ветку, путь и токен.'; return; }
-    try{
-      const sha = await ghGetSha(repo, branch, path, token);
-      const content = JSON.stringify(state.db, null, 2);
-      const res = await ghPut(repo, branch, path, token, content, sha);
-      byId('ghMsg').textContent = `OK: commit ${res.commit?.sha?.slice(0,7)||''}`;
-    }catch(e){
-      byId('ghMsg').textContent = 'Ошибка: ' + e.message;
-    }
-  };
+  async function saveToGitHub(){
+    const repo=$('ghRepo').value.trim(), branch=$('ghBranch').value.trim()||'main', path=$('ghPath').value.trim(), token=$('ghToken').value.trim();
+    if(!repo||!path||!token){ $('ghMsg').textContent='Заполни owner/repo, ветку, путь и токен.'; return; }
+    const sha=await ghGetSha(repo,branch,path,token);
+    const res=await ghPut(repo,branch,path,token, JSON.stringify(state.db,null,2), sha);
+    $('ghMsg').textContent = `OK: ${res.commit?.sha?.slice(0,7)||''}`;
+  }
+  $('btnSaveGitHub').onclick = saveToGitHub;
+  $('btnEditSaveGit').onclick = async ()=>{ applyEditForm(); try{ await saveToGitHub(); $('editMsg').textContent='Сохранено и закоммичено в GitHub.'; $('editMsg').className='muted ok'; }catch(e){ $('editMsg').textContent='Ошибка GitHub: '+e.message; $('editMsg').className='muted danger'; } };
+
 })();
 </script>
 </body>
