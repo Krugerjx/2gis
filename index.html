@@ -206,7 +206,7 @@
       suggestBox.style.display='none';
       renderList(); applyFiltersOnMap();
     }else{
-      renderList(); applyFiltersOnMap(); // чтобы скрывать несоответствующие полигоны при глобальном поиске тоже
+      renderList(); applyFiltersOnMap();
       debouncedNominatim(v);
     }
   }
@@ -248,7 +248,7 @@
 
     suggestBox.style.display='';
     suggestBox.innerHTML = '';
-    arr.forEach((it, idx)=>{
+    arr.forEach((it)=>{
       const city = it.address?.city || it.address?.town || it.address?.village || it.address?.municipality || '';
       const road = it.address?.road || it.address?.pedestrian || it.address?.footway || '';
       const house = it.address?.house_number || '';
@@ -283,11 +283,7 @@
     if(state.searchMarker){ map.removeLayer(state.searchMarker); state.searchMarker=null; }
     state.searchMarker = L.marker([lat,lon]).addTo(map).bindPopup(esc(sg.display_name)+'<br/><button id="ppAddBtn">Добавить как новый</button>').openPopup();
     map.setView([lat,lon], 18);
-    // кнопка в попапе
-    setTimeout(()=>{
-      const btn = document.getElementById('ppAddBtn');
-      if(btn) btn.onclick = ()=> addFromSuggestion(sg);
-    }, 0);
+    setTimeout(()=>{ const btn = document.getElementById('ppAddBtn'); if(btn) btn.onclick = ()=> addFromSuggestion(sg); }, 0);
   }
 
   async function addFromSuggestion(sg){
@@ -302,7 +298,6 @@
     state.selectedId = id;
     state.openItemId = id;
 
-    // попробуем сразу найти контур здания вокруг точки
     try{
       const ring = await fetchOverpassPolygon({lon:+sg.lon, lat:+sg.lat}, 400);
       if(ring){ it.polygon = ring; }
@@ -350,6 +345,7 @@
           <div class="act">
             <button class="ghost" title="Показать">Показать</button>
             <button class="ghost" title="Редактировать">✏️</button>
+            <button class="ghost" title="Удалить">🗑️</button>
           </div>
           <div class="muted" style="grid-column:1 / -1">
             ${it.city ? highlightLocal(it.city) : 'Без города'} • ${it.polygon && it.polygon.length>=3 ? 'Контур есть' : 'Контур не задан'}
@@ -381,7 +377,7 @@
           </div>
         `;
 
-        const [btnShow, btnEdit] = div.querySelectorAll('.act button');
+        const [btnShow, btnEdit, btnDel] = div.querySelectorAll('.act button');
         const eTitle = div.querySelector('.eTitle');
         const eCity  = div.querySelector('.eCity');
         const btnRelink = div.querySelector('.btnRelink');
@@ -401,6 +397,39 @@
           stopRelink(); stopDraw(true);
           renderList();
           if(state.openItemId===it.id) div.scrollIntoView({block:'center', behavior:'smooth'});
+        };
+
+        // 🗑️ Удаление адреса
+        btnDel.onclick = async ()=>{
+          const name = (it.title || '(без названия)').trim();
+          if(!confirm(`Точно удалить адрес:\n\n${name}\n\nДействие необратимо.`)) return;
+
+          stopRelink();
+          stopDraw(true);
+          if(state.previewLayer){ map.removeLayer(state.previewLayer); state.previewLayer=null; }
+
+          const layer = state.features.get(it.id);
+          if(layer && map.hasLayer(layer)) map.removeLayer(layer);
+          state.features.delete(it.id);
+
+          const idx = state.db.items.findIndex(x=>x.id===it.id);
+          if(idx!==-1) state.db.items.splice(idx,1);
+
+          if(state.selectedId===it.id) state.selectedId=null;
+          if(state.openItemId===it.id) state.openItemId=null;
+
+          state.db.updated_at = new Date().toISOString();
+
+          try{
+            const res = await saveDb();
+            $('loadMsg').textContent = `Удалено: ${name}. ${res}`;
+            $('loadMsg').className = 'muted ok';
+          }catch(err){
+            $('loadMsg').textContent = `Удалено локально: ${name}. Ошибка сохранения: ${err.message}`;
+            $('loadMsg').className = 'muted danger';
+          }
+
+          renderAll();
         };
 
         btnRelink.onclick = ()=>{
