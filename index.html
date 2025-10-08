@@ -306,18 +306,60 @@
     const path = pathParts.join(':') || 'database.json';
     return { repo: repoPart, branch, path, token };
   }
+
+  // ---- безопасное base64 для Unicode (Safari-friendly)
+  function toBase64Unicode(str){
+    const bytes = new TextEncoder().encode(str);
+    let bin = '';
+    const CHUNK = 0x8000;
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+      bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+    }
+    return btoa(bin);
+  }
+
   async function ghGetSha({repo,branch,path,token}){
     const url = `https://api.github.com/repos/${repo}/contents/${encodeURIComponent(path)}?ref=${encodeURIComponent(branch)}`;
-    const r = await fetch(url, { headers:{ 'Authorization':`Bearer ${token}`, 'Accept':'application/vnd.github+json' }});
+    const r = await fetch(url, {
+      method: 'GET',
+      mode: 'cors',
+      headers:{
+        'Authorization':`Bearer ${token}`,
+        'Accept':'application/vnd.github+json',
+        'X-GitHub-Api-Version':'2022-11-28'
+      }
+    });
     if(r.status===404) return null;
-    if(!r.ok) throw new Error('GitHub GET '+r.status);
+    if(!r.ok){
+      const t = await r.text().catch(()=> '');
+      throw new Error(`GitHub GET ${r.status} ${t}`);
+    }
     const j = await r.json(); return j.sha || null;
   }
+
   async function ghPut({repo,branch,path,token}, content, sha){
     const url = `https://api.github.com/repos/${repo}/contents/${encodeURIComponent(path)}`;
-    const body = { message:`update ${path} via leaflet`, branch, content: btoa(unescape(encodeURIComponent(content))), sha: sha||undefined };
-    const r = await fetch(url, { method:'PUT', headers:{ 'Authorization':`Bearer ${token}`, 'Accept':'application/vnd.github+json', 'Content-Type':'application/json' }, body: JSON.stringify(body) });
-    if(!r.ok) throw new Error('GitHub PUT '+r.status);
+    const body = {
+      message:`update ${path} via leaflet`,
+      branch,
+      content: toBase64Unicode(content),
+      sha: sha || undefined
+    };
+    const r = await fetch(url, {
+      method: 'PUT',
+      mode: 'cors',
+      headers:{
+        'Authorization':`Bearer ${token}`,
+        'Accept':'application/vnd.github+json',
+        'Content-Type':'application/json',
+        'X-GitHub-Api-Version':'2022-11-28'
+      },
+      body: JSON.stringify(body)
+    });
+    if(!r.ok){
+      let txt=''; try{ txt=await r.text(); }catch(_){}
+      throw new Error(`GitHub PUT ${r.status}: ${txt || 'Failed to save'}`);
+    }
     return await r.json();
   }
 
