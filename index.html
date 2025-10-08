@@ -3,68 +3,36 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Карта монтажа — контуры домов (Leaflet/OSM)</title>
+  <title>Карта монтажа — база JSON + коррекция контуров (Leaflet/OSM)</title>
 
-  <!-- Leaflet без ключей -->
+  <!-- Leaflet -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
   <style>
     html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
-    #app { display: grid; grid-template-columns: 400px 1fr; height: 100%; }
+    #app { display: grid; grid-template-columns: 420px 1fr; height: 100%; }
     #sidebar { padding: 14px; border-right: 1px solid #eee; overflow: auto; }
     #map { width: 100%; height: 100%; }
     .panel { background: #fafafa; border: 1px solid #eaeaea; border-radius: 12px; padding: 12px; margin-bottom: 12px; }
     .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     .row input, .row button, textarea { font-size: 14px; }
+    input[type="text"], input[type="url"], input[type="password"], select, textarea { padding: 8px; border: 1px solid #e5e7eb; border-radius: 8px; }
     textarea { width: 100%; min-height: 120px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas; }
     .legend { display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; font-size: 13px; }
     .swatch { width: 18px; height: 18px; border-radius: 4px; border: 1px solid rgba(0,0,0,.15); cursor: pointer; }
     .item { padding: 8px 10px; border-radius: 10px; border: 1px dashed #ddd; margin-bottom: 6px; cursor: pointer; }
+    .item.active{ background:#fff6e5; }
     .muted { color: #666; font-size: 13px; }
     .pill { padding: 2px 6px; border-radius: 999px; font-size: 12px; background: #f1f5f9; border: 1px solid #e5e7eb; }
     .hint { font-size: 12px; color:#475569; }
 
-    /* Палитра выбора цвета */
-    .color-picker {
-      position: absolute;
-      display: none;
-      background: #fff;
-      border: 1px solid #e5e7eb;
-      border-radius: 10px;
-      padding: 8px;
-      box-shadow: 0 10px 24px rgba(0,0,0,.15);
-      z-index: 9999;
-      grid-template-columns: repeat(10, 22px);
-      gap: 6px;
-    }
-    .color-cell {
-      width: 22px; height: 22px;
-      border-radius: 6px;
-      border: 1px solid rgba(0,0,0,.2);
-      cursor: pointer;
-    }
+    .color-picker { position: absolute; display: none; background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 8px; box-shadow: 0 10px 24px rgba(0,0,0,.15); z-index: 9999; grid-template-columns: repeat(10, 22px); gap: 6px; }
+    .color-cell { width: 22px; height: 22px; border-radius: 6px; border: 1px solid rgba(0,0,0,.2); cursor: pointer; }
 
     /* Номера домов — компактные, «прижаты» к контуру */
-    .house-label {
-      background: transparent;
-      border: none;
-      transform: translate(-50%, -50%);
-      pointer-events: none;
-    }
-    .house-label .hl {
-      display: inline-block;
-      padding: 0 3px;
-      font-size: 9px;
-      font-weight: 700;
-      background: rgba(255,255,255,.96);
-      border: 2px solid var(--hl-color, rgba(0,0,0,.25));
-      border-radius: 6px;
-      box-shadow: 0 1px 3px rgba(0,0,0,.10);
-      line-height: 1.1;
-      white-space: nowrap;
-      user-select: none;
-    }
+    .house-label { background: transparent; border: none; transform: translate(-50%, -50%); pointer-events: none; }
+    .house-label .hl { display: inline-block; padding: 0 3px; font-size: 9px; font-weight: 700; background: rgba(255,255,255,.96); border: 2px solid var(--hl-color, rgba(0,0,0,.25)); border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,.10); line-height: 1.1; white-space: nowrap; user-select: none; }
 
     .tip { font-size: 12px; color:#64748b; }
   </style>
@@ -73,84 +41,69 @@
 <div id="app">
   <div id="sidebar">
     <div class="panel">
-      <div style="font-weight:700;">Карта монтажа — Leaflet/OSM</div>
-      <div class="muted">Загрузи CSV/TSV или вставь вручную. Цвета — по компаниям. Подписи/номера — чекбоксами.</div>
+      <div style="font-weight:700;">База JSON → Leaflet/OSM</div>
+      <div class="muted">Загрузи базу из JSON (файл или URL). Все дома рисуются сразу. Если контур неверный — включи «Режим привязки», кликни на карте, выбери найденный контур и сохрани в базу.</div>
     </div>
 
     <div class="panel">
-      <div style="font-weight:600; margin-bottom:6px;">Загрузка файла (CSV/TSV)</div>
+      <div style="font-weight:600; margin-bottom:6px;">Загрузка базы</div>
       <div class="row">
-        <input type="file" id="fileInput" accept=".csv,.tsv,.txt" />
-        <button id="btnBuildFile">Загрузить и построить</button>
+        <input type="file" id="jsonFile" accept=".json" />
+        <button id="btnLoadJsonFile">Загрузить JSON</button>
       </div>
-      <div class="hint" style="margin-top:8px;">
-        Новый формат колонок: <b>№</b>, <b>Город</b>, <b>Улица</b>, <b>Дом</b>, <b>кол подъездов</b>, <b>Компания</b>.<br/>
-        Поддерживаются и старые форматы: <b>Город</b>, <b>Адрес</b>, <b>Компания</b> или прочие варианты из подсказки ниже.
+      <div class="row" style="margin-top:8px;">
+        <input type="url" id="jsonUrl" placeholder="https://raw.githubusercontent.com/owner/repo/branch/path/base.json" style="flex:1;" />
+        <button id="btnLoadJsonUrl">Загрузить по URL</button>
       </div>
+      <div class="hint" style="margin-top:6px;">Можно открыть со строкой запроса: <code>?data=&lt;raw_json_url&gt;</code> — база подгрузится автоматически.</div>
     </div>
 
     <div class="panel">
       <div class="row" style="justify-content:space-between;">
-        <div style="font-weight:600;">Адреса (ручной ввод)</div>
-        <div class="row" style="gap:12px;">
-          <label class="row" style="gap:6px;">
-            <input type="checkbox" id="chkLabels" />
-            Подписи компаний
-          </label>
-          <label class="row" style="gap:6px;">
-            <input type="checkbox" id="chkHnums" />
-            Номера домов
-          </label>
+        <div style="font-weight:600;">Записи базы</div>
+        <div class="row">
+          <button id="btnFit">Показать все</button>
+          <button id="btnDownloadJson" class="pill">Download JSON</button>
         </div>
       </div>
-      <textarea id="addrInput" placeholder="Варианты форматов (каждая строка — один адрес):
-• №[TAB]Город[TAB]Улица[TAB]Дом[TAB]кол подъездов[TAB]Компания
-  Пример: 1[TAB]г. Саратов[TAB]улица Рахова[TAB]169/171[TAB]2[TAB]ООО Альфа
-• Старый: Город, Адрес[TAB]Компания
-• Два ряда: Адрес ↵ Компания (на следующей строке)
-• 6-колоночный (старый): ID ID2 Город Улица Дом Подъезд"></textarea>
-      <div class="row" style="margin-top:8px;">
-        <button id="btnBuild">Построить</button>
-        <button id="btnClear">Очистить</button>
-        <button id="btnFit">Показать все</button>
-      </div>
+      <div id="itemsList"></div>
     </div>
 
     <div class="panel">
-      <div style="font-weight:600; margin-bottom:6px;">Выбор домов</div>
-      <label class="row" style="gap:6px; margin-bottom:6px;">
-        <input type="checkbox" id="chkSelectMode" />
-        Режим выбора домов
-      </label>
-      <label class="row" style="gap:6px; margin-bottom:6px;">
-        <input type="checkbox" id="chkOnlySel" />
-        Показывать на карте только выбранные
-      </label>
-      <div class="row" style="margin-bottom:8px;">
-        <button id="btnSelectBox">Выделить прямоугольником</button>
-        <button id="btnClearSel">Сбросить выделение</button>
+      <div style="font-weight:600; margin-bottom:6px;">Привязка/коррекция полигона</div>
+      <div class="muted">1) Выбери запись в списке → 2) Нажми «Режим привязки» → 3) Кликни по карте рядом с домом → 4) Подтверди сохранение.</div>
+      <div class="row" style="margin-top:8px;">
+        <button id="btnAttachMode">Режим привязки</button>
+        <button id="btnCancelAttach">Отмена</button>
       </div>
+      <div class="row" style="margin-top:8px;">
+        <button id="btnSavePreview" class="pill">Сохранить найденный контур в базу</button>
+      </div>
+      <div id="attachStatus" class="muted" style="margin-top:6px;"></div>
+    </div>
+
+    <div class="panel">
+      <div style="font-weight:600; margin-bottom:6px;">Сохранение в GitHub (опционально)</div>
+      <div class="row"><input type="text" id="ghRepo" placeholder="owner/repo" style="flex:1"></div>
+      <div class="row"><input type="text" id="ghBranch" placeholder="ветка (main)" value="main" style="flex:1"></div>
+      <div class="row"><input type="text" id="ghPath" placeholder="path/to/base.json" style="flex:1"></div>
+      <div class="row"><input type="password" id="ghToken" placeholder="GitHub PAT (scope: repo)" style="flex:1"></div>
       <div class="row">
-        <button id="btnGenerate">Сгенерировать наряд (таблица)</button>
-        <button id="btnExportMap">Экспорт карты (только выбранные)</button>
+        <button id="btnSaveGitHub" class="pill">Записать в GitHub</button>
       </div>
-      <div class="tip" style="margin-top:6px;">В режиме выбора кликай по дому для (де)выделения. Shift+перетаскивание — выделение прямоугольником.</div>
+      <div id="ghMsg" class="muted" style="margin-top:6px;"></div>
     </div>
 
     <div class="panel">
       <div style="font-weight:600; margin-bottom:6px;">Легенда компаний</div>
       <div id="legend" class="legend"></div>
     </div>
-
-    <div class="panel">
-      <div style="font-weight:600; margin-bottom:6px;">Найденные точки</div>
-      <div id="list"></div>
-    </div>
   </div>
+
   <div id="map"></div>
 </div>
 
-<!-- Палитра (портал) -->
+<!-- Палитра -->
 <div id="colorPicker" class="color-picker" role="dialog" aria-hidden="true"></div>
 
 <script>
@@ -160,53 +113,23 @@
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 20, attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
 
   const $ = (s)=>document.querySelector(s);
+  const byId = (id)=>document.getElementById(id);
+
+  // ===== Состояние =====
   const state = {
-    layers: [],         // полигоны/квадраты домов
-    labelEntries: [],   // тултипы компаний
-    numberMarkers: [],  // метки номеров
-    items: [],          // список для сайдбара
+    db: {version:1, updated_at:new Date().toISOString(), items:[]}, // JSON база
+    features: new Map(), // id -> Leaflet layer (polygon)
+    selectedId: null,
+    attachMode: false,
+    attachPreview: null, // Leaflet layer временного предварительного контура
+    layers: [],
+    labelEntries: [],
+    numberMarkers: [],
     bounds: L.latLngBounds(),
-    selected: new Set(),
-    hidden: new Set(),  // скрытые (для "только выбранные")
+    companyColors: new Map()
   };
 
-  // ===== Утилиты =====
-  function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-  function addListItem(item){
-    const el=document.createElement('div');
-    el.className='item';
-    el.innerHTML=`<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;">
-      <div style="font-weight:600">${escapeHtml(item.address)}</div>
-      ${item.company?`<span class='pill' style='border:1px solid ${item.color||'#ddd'}'>${escapeHtml(item.company)}</span>`:''}
-    </div>
-    <div class='muted'>
-      ${item.entrances ? `Подъездов: ${item.entrances} • ` : ''}${item.lat!=null&&item.lon!=null?`${Number(item.lat).toFixed(6)}, ${Number(item.lon).toFixed(6)}`:'—'}
-    </div>`;
-    el.addEventListener('click',()=>{ if(item.lat!=null&&item.lon!=null){ map.setView([item.lat,item.lon], 17); } });
-    $('#list').appendChild(el);
-  }
-  function rerenderList(){
-    $('#list').innerHTML='';
-    for(const it of state.items){
-      const color = colorByCompany(it.company||'');
-      addListItem({...it, color});
-    }
-  }
-  function clearAll(){
-    state.layers.forEach(l => map.removeLayer(l));
-    state.numberMarkers.forEach(m => map.removeLayer(m));
-    state.labelEntries = [];
-    state.numberMarkers = [];
-    state.layers = [];
-    state.items = [];
-    state.bounds = L.latLngBounds();
-    state.selected.clear();
-    state.hidden.clear();
-    $('#list').innerHTML = '';
-  }
-
   // ===== Цвета / легенда =====
-  const companyColor = new Map();
   const CONTRAST_COLORS = [
     '#e6194b','#3cb44b','#ffe119','#4363d8','#f58231','#911eb4',
     '#46f0f0','#f032e6','#bcf60c','#fabebe','#008080','#e6beff',
@@ -217,272 +140,120 @@
   ];
   function hash(str){ let h=0; for(let i=0;i<str.length;i++){ h=((h<<5)-h)+str.charCodeAt(i); h|=0; } return h; }
   function colorByCompany(company){
-    if(!company) return '#7c3aed';
-    if(companyColor.has(company)) return companyColor.get(company);
-    const idx = Math.abs(hash(company)) % CONTRAST_COLORS.length;
-    const c = CONTRAST_COLORS[idx];
-    companyColor.set(company,c);
-    return c;
-  }
-  function setCompanyColor(company, color){
-    companyColor.set(company, color);
-    recolorLayers(company, color);
-    rebuildLegend();
-    rerenderList();
-    rebuildHouseLabels();
-  }
-  function recolorLayers(company, color){
-    for(const layer of state.layers){
-      if(layer && layer._company === company && typeof layer.setStyle === 'function'){
-        layer.setStyle({ color, fillColor: color });
-      }
-    }
-  }
-  function addLegendRow(s,c){
-    const host=$('#legend');
-    const t=document.createElement('div'); t.textContent=s||'(без компании)';
-    const sw=document.createElement('div');
-    sw.className='swatch swatch-click';
-    sw.style.background=c||'#7c3aed';
-    if (s) {
-      sw.title = 'Изменить цвет';
-      sw.addEventListener('click', (ev)=> openColorPickerFor(s, ev.currentTarget));
-    }
-    host.appendChild(t); host.appendChild(sw);
+    const key = company || '(без компании)';
+    if(state.companyColors.has(key)) return state.companyColors.get(key);
+    const idx = Math.abs(hash(key)) % CONTRAST_COLORS.length;
+    const c = CONTRAST_COLORS[idx]; state.companyColors.set(key,c); return c;
   }
   function rebuildLegend(){
-    const host=$('#legend'); host.innerHTML='';
-    const arr=Array.from(companyColor.entries());
-    if(!arr.length){ addLegendRow('Адреса','#7c3aed'); return; }
-    arr.sort((a,b)=>a[0].localeCompare(b[0],'ru'));
-    arr.forEach(([s,c])=>addLegendRow(s,c));
+    const host = byId('legend'); host.innerHTML='';
+    const set = new Set(state.db.items.map(x=>x.company || '(без компании)'));
+    Array.from(set).sort((a,b)=>a.localeCompare(b,'ru')).forEach(name=>{
+      const sw=document.createElement('div'); sw.className='swatch'; sw.style.background=colorByCompany(name);
+      const label=document.createElement('div'); label.textContent=name;
+      host.appendChild(label); host.appendChild(sw);
+    });
   }
 
-  // ===== Палитра выбора цвета =====
-  const pickerEl = document.getElementById('colorPicker');
-  let pickerCompany = null;
-  (function fillPalette(){
-    pickerEl.style.display='grid';
-    pickerEl.innerHTML='';
-    CONTRAST_COLORS.forEach(col=>{
-      const cell=document.createElement('div');
-      cell.className='color-cell';
-      cell.style.background=col;
-      cell.addEventListener('click', ()=>{ if(pickerCompany){ setCompanyColor(pickerCompany, col); hidePicker(); }});
-      pickerEl.appendChild(cell);
-    });
-    pickerEl.style.display='none';
-  })();
-  function openColorPickerFor(company, anchor){
-    pickerCompany = company;
-    const r = anchor.getBoundingClientRect();
-    pickerEl.style.left = Math.min(window.scrollX + r.left, window.scrollX + window.innerWidth - 250) + 'px';
-    pickerEl.style.top  = (window.scrollY + r.bottom + 8) + 'px';
-    pickerEl.style.display = 'grid';
-    pickerEl.setAttribute('aria-hidden','false');
+  // ===== Утилиты =====
+  function escapeHtml(s){ return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+  function clearMap(){
+    state.features.forEach(l => map.removeLayer(l));
+    state.layers.forEach(l => map.removeLayer(l));
+    state.numberMarkers.forEach(m => map.removeLayer(m));
+    state.features.clear(); state.layers=[]; state.labelEntries=[];
+    state.numberMarkers=[]; state.bounds = L.latLngBounds();
   }
-  function hidePicker(){ pickerEl.style.display='none'; pickerEl.setAttribute('aria-hidden','true'); pickerCompany = null; }
-  document.addEventListener('click',(e)=>{
-    if(pickerEl.style.display==='none') return;
-    const withinPicker = pickerEl.contains(e.target);
-    const onSwatch = e.target.classList && e.target.classList.contains('swatch-click');
-    if(!withinPicker && !onSwatch) hidePicker();
+
+  function lonlatRingToLatlng(ring){ // [ [lon,lat], ... ] -> [ [lat,lon], ... ]
+    return ring.map(([x,y])=>[y,x]);
+  }
+
+  function drawItem(it){
+    if(!Array.isArray(it.polygon) || it.polygon.length < 3) return;
+    const color = colorByCompany(it.company);
+    const latlngs = lonlatRingToLatlng(it.polygon);
+    const poly = L.polygon(latlngs, { color, weight:2, fillColor:color, fillOpacity:0.9 }).addTo(map);
+    poly.on('click', ()=>{ state.selectedId = it.id; renderList(); });
+    state.features.set(it.id, poly);
+    state.layers.push(poly);
+    state.bounds.extend(poly.getBounds());
+    // номер дома по краю
+    placeLabelAtBuilding(poly, it);
+  }
+
+  function renderAll(){
+    clearMap();
+    for(const it of state.db.items) drawItem(it);
+    if(state.bounds.isValid()) map.fitBounds(state.bounds.pad(0.15));
+    rebuildLegend();
+    renderList();
+  }
+
+  function renderList(){
+    const box = byId('itemsList'); box.innerHTML='';
+    state.db.items.forEach(it=>{
+      const div = document.createElement('div');
+      div.className = 'item' + (state.selectedId===it.id?' active':'');
+      div.innerHTML = `
+        <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;">
+          <div style="font-weight:600">${escapeHtml(it.title || '(без названия)')}</div>
+          <span class="pill" style="border-color:${colorByCompany(it.company)}">${escapeHtml(it.company || '(без компании)')}</span>
+        </div>
+        <div class="muted">${escapeHtml(it.city || '')} • ${escapeHtml(it.status || '')}</div>
+      `;
+      div.onclick = ()=>{ state.selectedId = it.id; renderList(); focusItem(it.id); };
+      box.appendChild(div);
+    });
+  }
+
+  function focusItem(id){
+    const layer = state.features.get(id);
+    if(layer){ map.fitBounds(layer.getBounds().pad(0.3)); }
+  }
+
+  // ===== Номера домов (как у тебя) =====
+  function extractHouseFromTitle(t){
+    const s = String(t||'').trim();
+    const m = s.match(/,\s*([^,]+)\s*$/);
+    if(m) return m[1].replace(/^(дом|д\.)\s*/i,'').trim();
+    const m2 = s.match(/(\d+[0-9A-Za-zА-Яа-я\/\-]*?)\s*$/);
+    return m2 ? m2[1] : s;
+  }
+  function latLngWithPixelOffset(baseLatLng, dx, dy){
+    const p = map.latLngToLayerPoint(baseLatLng);
+    return map.layerPointToLatLng(L.point(p.x + dx, p.y + dy));
+  }
+  function placeLabelAtBuilding(layer, it){
+    const color = colorByCompany(it.company);
+    const text = it.meta?.house || extractHouseFromTitle(it.title || it.city || '');
+    const b = layer.getBounds();
+    const midLat = (b.getNorth()+b.getSouth())/2;
+    const midLng = (b.getEast()+b.getWest())/2;
+    const candidates = [
+      {anchor: L.latLng(b.getNorth(), midLng), off:[0,-12]},
+      {anchor: L.latLng(midLat, b.getEast()),  off:[+12,0]},
+      {anchor: L.latLng(midLat, b.getWest()),  off:[-12,0]},
+      {anchor: L.latLng(b.getSouth(), midLng), off:[0,+12]},
+    ];
+    const pos = latLngWithPixelOffset(candidates[0].anchor, candidates[0].off[0], candidates[0].off[1]);
+    const html = `<span class="hl" style="--hl-color:${color}">${escapeHtml(text)}</span>`;
+    const icon = L.divIcon({ className:'house-label', html, iconSize: null });
+    const mk = L.marker(pos, { icon, interactive:false, keyboard:false }).addTo(map);
+    state.numberMarkers.push(mk);
+  }
+  map.on('zoomend moveend', ()=>{ // перестроить подписи по движению
+    state.numberMarkers.forEach(m => map.removeLayer(m));
+    state.numberMarkers = [];
+    state.db.items.forEach(it=>{
+      const layer = state.features.get(it.id);
+      if(layer) placeLabelAtBuilding(layer, it);
+    });
   });
 
-  // ===== Парсеры =====
-  function isCompanyLine(s){
-    const t = String(s||'').trim();
-    return /^((ООО|ОАО|ПАО|ЗАО|АО|ИП|ТОО|OOO|LLC|LTD|GMBH|GmbH)|[0OО]{3})\b/i.test(t);
-  }
-  function normalizeCompany(s){
-    return String(s||'').trim()
-      .replace(/^[0OО]{3}\b\.?/i,'ООО')
-      .replace(/\s+/g,' ')
-      .trim();
-  }
-
-  // новый 6-колоночный разбор из строки (tab-разделитель)
-  function parseSixCols(parts){
-    // parts: №, Город, Улица, Дом, кол подъездов, Компания
-    const n = parts[0]?.trim();
-    const city = parts[1]?.trim();
-    const street = parts[2]?.trim();
-    const house = parts[3]?.trim();
-    const entrances = parts[4]?.trim();
-    const company = normalizeCompany(parts.slice(5).join(' ').trim()); // на случай табов внутри
-    const baseAddr = [city, street, house].filter(Boolean).join(', ');
-    const address = baseAddr;
-    return { num:n, city, street, house, entrances, address, company };
-  }
-
-  // (оставим поддержку «пятиричного» варианта на всякий случай: №, Улица, Дом, подъезды, Компания)
-  function parseFiveCols(parts){
-    const n = parts[0]?.trim();
-    const street = parts[1]?.trim();
-    const house = parts[2]?.trim();
-    const entrances = parts[3]?.trim();
-    const company = normalizeCompany(parts.slice(4).join(' ').trim());
-    const address = [street, house].filter(Boolean).join(', ');
-    return { num:n, city:'', street, house, entrances, address, company };
-  }
-
-  function parseTextarea(text){
-    const raw = text.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
-    const out=[];
-    for(let i=0;i<raw.length;i++){
-      const line = raw[i];
-      const partsTab = line.split(/\t/);
-
-      // 1) новый формат: № \t Город \t Улица \t Дом \t кол \t Компания
-      if (partsTab.length >= 6){ out.push(parseSixCols(partsTab)); continue; }
-
-      // 1b) прежний «пятиричный» — поддерживаем
-      if (partsTab.length === 5){ out.push(parseFiveCols(partsTab)); continue; }
-
-      // 2) старый: Адрес[TAB]Компания
-      if (partsTab.length >= 2){
-        out.push({ address: partsTab[0].trim(), company: normalizeCompany(partsTab.slice(1).join(' ').trim()) });
-        continue;
-      }
-
-      // 3) «адрес на строке N, компания на строке N+1»
-      if(i+1 < raw.length && isCompanyLine(raw[i+1])){
-        out.push({ address: line, company: normalizeCompany(raw[i+1]) });
-        i++;
-        continue;
-      }
-
-      // 4) попытка выделить компанию через двоеточие/тире в одной строке
-      let m = line.match(/^(.*?)(?:\s{2,}|[—\-:;|]\s*)(\b(?:ООО|ОАО|ПАО|ЗАО|АО|ИП|OOO|LLC|LTD|GMBH|[0OО]{3})\b\.?\s*.*)$/i);
-      if(m){ out.push({ address: m[1].trim(), company: normalizeCompany(m[2]) }); continue; }
-
-      // 5) иначе — просто адрес
-      out.push({ address: line, company: '' });
-    }
-    return out;
-  }
-
-  function stripBOM(s){ return s.replace(/^\uFEFF/, ''); }
-  function smartSplit(line, delim){
-    const out=[], d = delim, n = line.length;
-    let cur='', inQ=false;
-    for(let i=0;i<n;i++){
-      const ch=line[i];
-      if(ch === '"'){ if(inQ && line[i+1] === '"'){ cur+='"'; i++; } else inQ=!inQ; }
-      else if(!inQ && ch === d){ out.push(cur); cur=''; }
-      else { cur+=ch; }
-    }
-    out.push(cur);
-    return out.map(s=>s.trim());
-  }
-  function detectDelimiter(text){
-    const sample = stripBOM(text).split(/\r?\n/).filter(l=>l.trim()).slice(0,6);
-    const cands=[',',';','\t'];
-    function score(d){
-      const cols = sample.map(l=>smartSplit(l,d).length);
-      const min=Math.min(...cols), max=Math.max(...cols);
-      return {d, spread:max-min, maxCols:Math.max(...cols)};
-    }
-    return cands.map(score).sort((a,b)=> a.spread-b.spread || b.maxCols-a.maxCols)[0].d;
-  }
-
-  function parseCSV(text){
-    const t = stripBOM(text);
-    const delim = detectDelimiter(t);
-    const rows = t.split(/\r?\n/).filter(l=>l.trim().length>0);
-    if(rows.length===0) return [];
-
-    const headerRaw = smartSplit(rows[0], delim).map(h=>h.replace(/^"|"$/g,'').trim());
-    const header = headerRaw.map(h=>h.toLowerCase());
-
-    // индексы нового формата
-    const idxNum       = header.findIndex((_,i)=>/^(№|#|num|номер)$/i.test(headerRaw[i]));
-    const idxCityNew   = header.findIndex(h=>/^(город|city)$/.test(h));
-    const idxStreet    = header.findIndex(h=>/(улица|street)/.test(h));
-    const idxHouse     = header.findIndex(h=>/^(дом|house|№ дома|номер дома)$/.test(h) || /(^|[^а-я])дом([^а-я]|$)/.test(h));
-    const idxEntrances = header.findIndex(h=>/(кол|кол-во|количество).*(подъезд|подъездов)|entrances/.test(h));
-    const idxCompanyN  = header.findIndex(h=>/^(компан|company)/.test(h));
-
-    // индексы старого формата
-    const idxCityOld    = header.findIndex(h=>/^(город|city)$/.test(h));
-    const idxAddrOld    = header.findIndex(h=>/^(адрес|address)$/.test(h));
-    const idxCompanyOld = idxCompanyN >= 0 ? idxCompanyN : header.findIndex(h=>/^(компан|company)/.test(h));
-
-    const out=[];
-    const hasNew6 = (idxCityNew>=0 && idxStreet>=0 && idxHouse>=0);
-
-    for(let i=1;i<rows.length;i++){
-      const cols = smartSplit(rows[i], delim).map(v=>{
-        if(v.startsWith('"') && v.endsWith('"')) v=v.slice(1,-1).replace(/""/g,'"');
-        return v.trim();
-      });
-
-      if (hasNew6){
-        const parts = [];
-        parts[0] = idxNum>=0 ? cols[idxNum] : '';
-        parts[1] = idxCityNew>=0 ? cols[idxCityNew] : '';
-        parts[2] = idxStreet>=0 ? cols[idxStreet] : '';
-        parts[3] = idxHouse>=0 ? cols[idxHouse] : '';
-        parts[4] = idxEntrances>=0 ? cols[idxEntrances] : '';
-        const comp = idxCompanyN>=0 ? cols[idxCompanyN] : '';
-        const obj = parseSixCols([parts[0]||'', parts[1]||'', parts[2]||'', parts[3]||'', parts[4]||'', comp||'']);
-        out.push(obj);
-        continue;
-      }
-
-      // Старый формат: Город, Адрес, Компания
-      const city = idxCityOld>=0 ? cols[idxCityOld] : '';
-      const addr = idxAddrOld>=0 ? cols[idxAddrOld] : '';
-      const comp = idxCompanyOld>=0 ? cols[idxCompanyOld] : '';
-      const full = city ? `${city}, ${addr}` : addr;
-      if(full) out.push({ address: full, company: normalizeCompany(comp) });
-    }
-    return out;
-  }
-
-  // ===== Геокодеры =====
-  async function geocodePhoton(address){
-    const url = new URL('https://photon.komoot.io/api/'); url.searchParams.set('q', address); url.searchParams.set('limit', '1');
-    const r = await fetch(url.toString(), { headers: { 'Accept': 'application/json' } });
-    if(!r.ok) return null;
-    const j = await r.json();
-    const f = j?.features?.[0];
-    if(!f) return null;
-    const point = f.geometry?.type==='Point' ? f.geometry.coordinates : null; // [lon, lat]
-    let polygon = null;
-    if (f.geometry?.type === 'Polygon') polygon = f.geometry.coordinates[0];
-    if (f.geometry?.type === 'MultiPolygon') polygon = f.geometry.coordinates[0][0];
-    return { point, polygon };
-  }
-  async function geocodeNominatim(address){
-    const url = new URL('https://nominatim.openstreetmap.org/search');
-    url.searchParams.set('q', address); url.searchParams.set('format', 'jsonv2'); url.searchParams.set('limit', '1');
-    const r = await fetch(url.toString(), { headers: { 'Accept': 'application/json' } });
-    if(!r.ok) return null;
-    const arr = await r.json();
-    const obj = arr?.[0];
-    if(!obj) return null;
-    const point = obj.lon && obj.lat ? [parseFloat(obj.lon), parseFloat(obj.lat)] : null;
-    return { point, polygon: null };
-  }
-  async function geocode(address){
-    let res = await geocodePhoton(address);
-    if (res) return res;
-    await new Promise(r=>setTimeout(r,150));
-    return await geocodeNominatim(address);
-  }
-
-  // ===== Overpass: контур здания (надёжно, с ретраями и зеркалами) =====
-  async function fetchWithTimeout(url, options={}, timeoutMs=65000) {
-    const ctl = new AbortController();
-    const id = setTimeout(()=>ctl.abort(new Error('timeout')), timeoutMs);
-    try {
-      const res = await fetch(url, { ...options, signal: ctl.signal });
-      return res;
-    } finally { clearTimeout(id); }
-  }
-
-  async function fetchBuildingPolygon({ lon, lat }, radius = 500) {
+  // ===== Overpass: поиск ближайшего здания к клику =====
+  async function fetchOverpassPolygon({ lon, lat }, radius = 500) {
     const ENDPOINTS = [
       'https://overpass.kumi.systems/api/interpreter',
       'https://overpass-api.de/api/interpreter',
@@ -496,524 +267,174 @@
       );
       out body geom;
     `.trim();
+    for (const ep of ENDPOINTS) {
+      try {
+        const r = await fetch(ep, {
+          method: 'POST',
+          headers: {'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8'},
+          body: new URLSearchParams({ data: q })
+        });
+        if (!r.ok) continue;
+        const data = await r.json();
+        if (!Array.isArray(data.elements) || !data.elements.length) continue;
 
-    const attempts = 3;
-    for (let tryN = 0; tryN < attempts; tryN++) {
-      for (const ep of ENDPOINTS) {
-        try {
-          const resp = await fetchWithTimeout(ep, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
-            body: new URLSearchParams({ data: q })
-          }, 65000);
-
-          if (!resp.ok) {
-            if (resp.status === 429 || (resp.status >= 500 && resp.status < 600)) {
-              await new Promise(r=>setTimeout(r, 800 + 400*tryN));
-              continue;
-            }
-            continue;
-          }
-
-          const data = await resp.json();
-          if (!Array.isArray(data.elements) || !data.elements.length) continue;
-
-          function dist2(aLat, aLon, bLat, bLon) {
-            const dLat = (aLat - bLat), dLon = (aLon - bLon);
-            return dLat*dLat + dLon*dLon;
-          }
-          let best = null, bestD = Infinity;
-          for (const el of data.elements) {
-            if ((el.type === 'way' || el.type === 'relation') && Array.isArray(el.geometry) && el.geometry.length >= 4) {
-              const ring = el.geometry.map(p => [p.lat, p.lon]);
-              const first = ring[0], last = ring[ring.length - 1];
-              if (first[0] !== last[0] || first[1] !== last[1]) ring.push(first);
-              let minLat=+Infinity, minLon=+Infinity, maxLat=-Infinity, maxLon=-Infinity;
-              for (const [la,lo] of ring) { if (la<minLat) minLat=la; if (la>maxLat) maxLat=la; if (lo<minLon) minLon=lo; if (lo>maxLon) maxLon=lo; }
-              const cLat=(minLat+maxLat)/2, cLon=(minLon+maxLon)/2;
-              const d = dist2(cLat, cLon, lat, lon);
-              if (d < bestD) { bestD = d; best = ring; }
-            }
-          }
-          if (best) return best;
-        } catch (e) {
-          await new Promise(r=>setTimeout(r, 600));
+        // выбрать ближайший к точке по центру bbox
+        let best=null, bestD=Infinity;
+        for (const el of data.elements) {
+          const g = el.geometry;
+          if (!Array.isArray(g) || g.length<4) continue;
+          const ringLonLat = g.map(p=>[p.lon,p.lat]);
+          let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
+          ringLonLat.forEach(([x,y])=>{ if(x<minX)minX=x; if(x>maxX)maxX=x; if(y<minY)minY=y; if(y>maxY)maxY=y; });
+          const cx=(minX+maxX)/2, cy=(minY+maxY)/2;
+          const d=(cx-lon)*(cx-lon)+(cy-lat)*(cy-lat);
+          if (d<bestD){bestD=d;best=ringLonLat;}
         }
-      }
+        if (best) {
+          const f=best[0], l=best[best.length-1];
+          if (f[0]!==l[0] || f[1]!==l[1]) best.push([f[0],f[1]]);
+          return best; // [ [lon,lat], ... ]
+        }
+      } catch(e){ /* next endpoint */ }
     }
     return null;
   }
 
-  // ===== Подписи компаний =====
-  function applyTooltip(layer, label){
-    const permanent = $('#chkLabels').checked;
-    let hint = '';
-    if (layer._entrances) hint = ` (подъездов: ${layer._entrances})`;
-    if (layer._house) hint = (hint ? ` • ${layer._house}` : layer._house);
-    const final = [label, hint].filter(Boolean).join('');
-    if (layer._tooltip) layer.unbindTooltip();
-    layer.bindTooltip(final, { permanent, direction: 'top', className: 'company-tooltip', sticky: !permanent });
-    if (permanent) layer.openTooltip();
+  function clearPreview(){
+    if(state.attachPreview){ map.removeLayer(state.attachPreview); state.attachPreview=null; }
+    byId('attachStatus').textContent='';
   }
-  function reapplyAllTooltips(){
-    const permanent = $('#chkLabels').checked;
-    state.labelEntries.forEach(({layer, label})=>{
-      if (layer._tooltip) layer.unbindTooltip();
-      let hint = '';
-      if (layer._entrances) hint = ` (подъездов: ${layer._entrances})`;
-      if (layer._house) hint = (hint ? ` • ${layer._house}` : layer._house);
-      const final = [label, hint].filter(Boolean).join('');
-      layer.bindTooltip(final, { permanent, direction: 'top', className: 'company-tooltip', sticky: !permanent });
-      if (permanent) layer.openTooltip();
-    });
+  function showPreview(lonlatRing, color){
+    clearPreview();
+    const latlngs = lonlatRingToLatlng(lonlatRing);
+    state.attachPreview = L.polygon(latlngs, { color:'#111', weight:2, fillColor: color, fillOpacity:0.5 }).addTo(map);
+    map.fitBounds(state.attachPreview.getBounds().pad(0.2));
   }
-  $('#chkLabels').addEventListener('change', reapplyAllTooltips);
 
-  // ===== Номера домов: «прижать» к контуру =====
-  function extractHouse(address){
-    const s = String(address||'').replace(/["“”]/g,'').trim();
-    const m = s.match(/,\s*([^,]+)\s*$/);
-    if(m) return m[1].replace(/^(дом|д\.)\s*/i,'').trim();
-    const m2 = s.match(/(\d+[0-9A-Za-zА-Яа-я\/\-]*?)\s*$/);
-    return (m2 ? m2[1] : s);
+  // ===== Режим привязки =====
+  byId('btnAttachMode').onclick = ()=>{
+    if(!state.selectedId){ alert('Сначала выбери запись в списке.'); return; }
+    state.attachMode = true;
+    byId('attachStatus').textContent = 'Режим привязки активен: кликни по карте рядом со зданием.';
+  };
+  byId('btnCancelAttach').onclick = ()=>{
+    state.attachMode = false; clearPreview();
+  };
+
+  map.on('click', async (e)=>{
+    if(!state.attachMode) return;
+    byId('attachStatus').textContent = 'Ищу ближайший контур здания…';
+    const { lat, lng } = e.latlng;
+    const ring = await fetchOverpassPolygon({ lon: lng, lat: lat }, 500);
+    if(!ring){ byId('attachStatus').textContent = 'Не нашёл контур. Попробуй кликнуть ближе к дому.'; return; }
+    const it = state.db.items.find(x=>x.id===state.selectedId);
+    const color = colorByCompany(it?.company);
+    showPreview(ring, color);
+    byId('attachStatus').textContent = 'Контур найден. Нажми «Сохранить найденный контур в базу».';
+  });
+
+  byId('btnSavePreview').onclick = ()=>{
+    if(!state.attachPreview || !state.selectedId){ alert('Нет предварительного контура или записи.'); return; }
+    // забираем latlngs из preview → переводим в [lon,lat] для JSON
+    const latlngs = state.attachPreview.getLatLngs()[0]; // внешний контур
+    const ringLonLat = latlngs.map(p=>[p.lng, p.lat]);
+    const it = state.db.items.find(x=>x.id===state.selectedId);
+    if(!it){ alert('Запись не найдена.'); return; }
+    it.polygon = ringLonLat;
+    state.db.updated_at = new Date().toISOString();
+    // перерисовать
+    renderAll();
+    state.attachMode = false;
+    clearPreview();
+    byId('attachStatus').textContent = 'Сохранено в локальной базе. Нажми Download JSON или «Записать в GitHub».';
+  };
+
+  // ===== Загрузка/сохранение базы =====
+  function normalizeDb(j){
+    const out = {version:1, updated_at:new Date().toISOString(), items:[]};
+    out.version = j.version || 1;
+    out.updated_at = new Date().toISOString();
+    out.items = Array.isArray(j.items) ? j.items.map(x=>({
+      id: String(x.id || crypto.randomUUID()),
+      title: x.title || '',
+      city: x.city || '',
+      company: x.company || '',
+      status: x.status || '',
+      meta: x.meta || {},
+      polygon: Array.isArray(x.polygon) ? x.polygon : null
+    })) : [];
+    return out;
   }
-  function latLngWithPixelOffset(baseLatLng, dx, dy){
-    const p = map.latLngToLayerPoint(baseLatLng);
-    return map.layerPointToLatLng(L.point(p.x + dx, p.y + dy));
+  async function loadJsonFromUrl(url){
+    const r = await fetch(url, {headers:{'Accept':'application/json'}});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const j = await r.json();
+    state.db = normalizeDb(j);
+    renderAll();
   }
-  function placeLabelAtBuilding(layer){
-    const addr = layer._address||'', company = layer._company||'';
-    const color = colorByCompany(company);
-    const text = layer._house || extractHouse(addr);
-    const b = layer.getBounds();
-    const midLat = (b.getNorth()+b.getSouth())/2;
-    const midLng = (b.getEast()+b.getWest())/2;
-    const candidates = [
-      {anchor: L.latLng(b.getNorth(), midLng), off:[0,-12]},
-      {anchor: L.latLng(midLat, b.getEast()),  off:[+12,0]},
-      {anchor: L.latLng(midLat, b.getWest()),  off:[-12,0]},
-      {anchor: L.latLng(b.getSouth(), midLng), off:[0,+12]},
-    ];
-    let marker=null;
-    for(const c of candidates){
-      const pos = latLngWithPixelOffset(c.anchor, c.off[0], c.off[1]);
-      const html = `<span class="hl" style="--hl-color:${color}">${escapeHtml(text)}</span>`;
-      const icon = L.divIcon({ className:'house-label', html, iconSize: null });
-      const mk = L.marker(pos, { icon, interactive:false, keyboard:false }).addTo(map);
-      marker = mk; break;
+  async function loadJsonFromFile(file){
+    const text = await file.text();
+    const j = JSON.parse(text);
+    state.db = normalizeDb(j);
+    renderAll();
+  }
+  function downloadDb(){
+    const blob = new Blob([JSON.stringify(state.db,null,2)], {type:'application/json;charset=utf-8'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `addresses_${new Date().toISOString().slice(0,10)}.json`;
+    a.click(); URL.revokeObjectURL(a.href);
+  }
+
+  byId('btnLoadJsonFile').onclick = async ()=>{
+    const f = byId('jsonFile').files?.[0];
+    if(!f){ alert('Выбери JSON-файл.'); return; }
+    await loadJsonFromFile(f);
+  };
+  byId('btnLoadJsonUrl').onclick = async ()=>{
+    const u = byId('jsonUrl').value.trim();
+    if(!u){ alert('Введи URL сырого JSON (raw.githubusercontent.com/…)'); return; }
+    await loadJsonFromUrl(u);
+  };
+  byId('btnDownloadJson').onclick = downloadDb;
+  byId('btnFit').onclick = ()=>{ if(state.bounds.isValid()) map.fitBounds(state.bounds.pad(0.15)); };
+
+  // Автозагрузка ?data=
+  const params = new URLSearchParams(location.search);
+  const dataUrl = params.get('data');
+  if(dataUrl){ loadJsonFromUrl(dataUrl).catch(e=>console.warn('auto-load error', e)); }
+
+  // ===== GitHub save (опционально) =====
+  async function ghGetSha(repo, branch, path, token){
+    const url = `https://api.github.com/repos/${repo}/contents/${encodeURIComponent(path)}?ref=${encodeURIComponent(branch)}`;
+    const r = await fetch(url, {headers:{'Authorization':`Bearer ${token}`,'Accept':'application/vnd.github+json'}});
+    if(r.status===404) return null;
+    if(!r.ok) throw new Error('GET sha HTTP '+r.status);
+    const j = await r.json(); return j.sha || null;
+  }
+  async function ghPut(repo, branch, path, token, content, sha){
+    const url = `https://api.github.com/repos/${repo}/contents/${encodeURIComponent(path)}`;
+    const body = { message:`update ${path} via leaflet editor`, branch, content: btoa(unescape(encodeURIComponent(content))), sha: sha||undefined };
+    const r = await fetch(url, { method:'PUT', headers:{'Authorization':`Bearer ${token}`,'Accept':'application/vnd.github+json','Content-Type':'application/json'}, body: JSON.stringify(body) });
+    if(!r.ok) throw new Error('PUT HTTP '+r.status);
+    return await r.json();
+  }
+  byId('btnSaveGitHub').onclick = async ()=>{
+    const repo = byId('ghRepo').value.trim();
+    const branch = byId('ghBranch').value.trim() || 'main';
+    const path = byId('ghPath').value.trim();
+    const token = byId('ghToken').value.trim();
+    byId('ghMsg').textContent = '';
+    if(!repo || !path || !token){ byId('ghMsg').textContent = 'Заполни owner/repo, ветку, путь и токен.'; return; }
+    try{
+      const sha = await ghGetSha(repo, branch, path, token);
+      const content = JSON.stringify(state.db, null, 2);
+      const res = await ghPut(repo, branch, path, token, content, sha);
+      byId('ghMsg').textContent = `OK: commit ${res.commit?.sha?.slice(0,7)||''}`;
+    }catch(e){
+      byId('ghMsg').textContent = 'Ошибка: ' + e.message;
     }
-    marker._company = company;
-    state.numberMarkers.push(marker);
-  }
-  function rebuildHouseLabels(){
-    state.numberMarkers.forEach(m => map.removeLayer(m));
-    state.numberMarkers = [];
-    if(!$('#chkHnums').checked) return;
-    state.layers.forEach(l => {
-      if(l._address && l.getBounds && map.hasLayer(l)){
-        placeLabelAtBuilding(l);
-      }
-    });
-  }
-  map.on('zoomend moveend', rebuildHouseLabels);
-  $('#chkHnums').addEventListener('change', rebuildHouseLabels);
-
-  // ===== Выбор домов =====
-  function inSelectMode(){ return $('#chkSelectMode').checked; }
-
-  function applySelectedStyle(layer){
-    const base = colorByCompany(layer._company||'');
-    layer.setStyle({ fillColor: base, color: '#111', weight: 4, dashArray: '6 3' });
-  }
-  function applyBaseStyle(layer){
-    const base = colorByCompany(layer._company||'');
-    layer.setStyle({ fillColor: base, color: base, weight: 2, dashArray: null });
-  }
-  function toggleLayerSelection(layer){
-    if(!inSelectMode()) return;
-    if(state.selected.has(layer)){
-      state.selected.delete(layer);
-      applyBaseStyle(layer);
-    } else {
-      state.selected.add(layer);
-      applySelectedStyle(layer);
-    }
-    updateOnlySelectedVisibility();
-    rebuildHouseLabels();
-  }
-  function clearSelection(){
-    for(const l of state.selected) applyBaseStyle(l);
-    state.selected.clear();
-    updateOnlySelectedVisibility();
-    rebuildHouseLabels();
-  }
-  $('#chkSelectMode').addEventListener('change', ()=>{/*просто режим*/});
-  $('#btnClearSel').addEventListener('click', clearSelection);
-
-  // Показать только выбранные
-  document.getElementById('chkOnlySel').addEventListener('change', updateOnlySelectedVisibility);
-  function updateOnlySelectedVisibility(){
-    const only = $('#chkOnlySel').checked;
-    if(only){
-      for(const l of state.layers){
-        if(!state.selected.has(l) && map.hasLayer(l)){
-          map.removeLayer(l);
-          state.hidden.add(l);
-        }
-      }
-    } else {
-      for(const l of state.hidden){
-        if(!map.hasLayer(l)) l.addTo(map);
-      }
-      state.hidden.clear();
-    }
-    rebuildHouseLabels();
-  }
-
-  // Подсказка про прямоугольник
-  document.getElementById('btnSelectBox').addEventListener('click', ()=>{
-    alert('Удерживай Shift и перетаскивай по карте — дома в прямоугольнике будут выделены.');
-  });
-  map.on('boxzoomend', (e)=>{
-    if(!inSelectMode()) return;
-    const bounds = e.boxZoomBounds || e.bounds;
-    if(!bounds) return;
-    for(const l of state.layers){
-      if(l.getBounds && bounds.intersects(l.getBounds())){
-        state.selected.add(l);
-        applySelectedStyle(l);
-      }
-    }
-    updateOnlySelectedVisibility();
-    rebuildHouseLabels();
-  });
-
-  // ===== Попапы =====
-  function popupHtml({company, address, color, lat, lon, entrances, house}){
-    const coord = (lat!=null&&lon!=null) ? `<div class='muted' style="margin-top:6px">${lat.toFixed(6)}, ${lon.toFixed(6)}</div>` : '';
-    const meta = (entrances || house) ? `<div class='muted' style="margin-top:6px">${house?`Дом: ${escapeHtml(house)}`:''}${(entrances&&house)?' • ':''}${entrances?`Подъездов: ${escapeHtml(String(entrances))}`:''}</div>` : '';
-    return `<div style="font-weight:700; margin-bottom:4px;">
-        <span class="pill" style="border:1px solid ${color};">${escapeHtml(company||'(без компании)')}</span>
-      </div>
-      <div>${escapeHtml(address)}</div>${meta}${coord}`;
-  }
-
-  // ===== Построение =====
-  function squareAround([lon, lat], meters = 30){
-    const dLat = (meters / 111320);
-    const dLon = (meters / (40075000 * Math.cos(lat*Math.PI/180) / 360));
-    return [[lat+dLat, lon-dLon],[lat+dLat, lon+dLon],[lat-dLat, lon+dLon],[lat-dLat, lon-dLon]];
-  }
-
-  async function buildFromItems(items){
-    clearAll();
-    for(const item of items){
-      const color = colorByCompany(item.company||'');
-      const entrances = item.entrances ? String(item.entrances).trim() : '';
-      const houseShort = item.house ? String(item.house).trim() : '';
-
-      try{
-        const res = await geocode(item.address);
-        if(!res){
-          state.items.push({address:item.address, company:item.company||'', entrances, lat:null, lon:null});
-          addListItem({...item, color, entrances});
-          continue;
-        }
-
-        let latlng = null, poly = null;
-
-        if(res.polygon){
-          const ringLatLng = res.polygon.map(([lon,lat])=>[lat,lon]);
-          poly = L.polygon(ringLatLng, { color: color, weight: 2, fillColor: color, fillOpacity: 0.9 }).addTo(map);
-          latlng = poly.getBounds().getCenter();
-          console.debug('overpass:', item.address, 'polygon(photon)');
-        } else if(res.point){
-          const [lon, lat] = res.point;
-          let ring = null;
-          try {
-            // 1-я попытка R=500
-            ring = await fetchBuildingPolygon({ lon, lat }, 500);
-            // если не нашли — подождать и попробовать шире
-            if (!ring) {
-              await new Promise(r=>setTimeout(r,700));
-              ring = await fetchBuildingPolygon({ lon, lat }, 800);
-            }
-          } catch(e){
-            console.warn('Overpass fail', e);
-          }
-          if (ring && ring.length >= 4) {
-            poly = L.polygon(ring, { color: color, weight: 2, fillColor: color, fillOpacity: 0.9 }).addTo(map);
-            latlng = poly.getBounds().getCenter();
-            console.debug('overpass:', item.address, 'polygon');
-          } else {
-            const sq = squareAround([lon,lat], 30).map(([la,lo])=>[la,lo]);
-            poly = L.polygon(sq, { color: color, weight: 2, fillColor: color, fillOpacity: 0.9 }).addTo(map);
-            const dot  = L.circleMarker([lat,lon], { radius: 4, color: '#fff', weight: 2, fillColor: color, fillOpacity: 1 }).addTo(map);
-            state.layers.push(dot);
-            latlng = [lat,lon];
-            console.debug('overpass:', item.address, 'square');
-          }
-        }
-
-        if(poly){
-          poly._company = item.company || '';
-          poly._address = item.address || '';
-          poly._entrances = entrances || '';
-          poly._house = houseShort || '';
-          poly.on('click', ()=> toggleLayerSelection(poly));
-          state.layers.push(poly);
-
-          const label = item.company || '';
-          applyTooltip(poly, label);
-          const _lat = latlng.lat!==undefined ? latlng.lat : latlng[0];
-          const _lon = latlng.lng!==undefined ? latlng.lng : latlng[1];
-          poly.bindPopup(popupHtml({
-            company:item.company,
-            address:item.address,
-            color,
-            lat:_lat, lon:_lon,
-            entrances,
-            house: houseShort || extractHouse(item.address)
-          }));
-          state.labelEntries.push({layer: poly, label});
-        }
-
-        if(latlng){
-          const lat = latlng.lat!==undefined ? latlng.lat : latlng[0];
-          const lon = latlng.lng!==undefined ? latlng.lng : latlng[1];
-          item.lat = lat; item.lon = lon;
-          state.bounds.extend([lat, lon]);
-          state.items.push({address:item.address, company:item.company||'', entrances, lat, lon});
-        } else {
-          state.items.push({address:item.address, company:item.company||'', entrances, lat:null, lon:null});
-        }
-        addListItem({...item, color, entrances});
-
-        // пауза между адресами (было 160)
-        await new Promise(r=>setTimeout(r,350));
-      }catch(e){
-        console.warn('Ошибка геокодинга', item.address, e);
-        state.items.push({address:item.address, company:item.company||'', entrances, lat:null, lon:null});
-        addListItem({...item, color, entrances});
-      }
-    }
-    rebuildLegend();
-    if(state.bounds.isValid()) map.fitBounds(state.bounds.pad(0.2));
-    rebuildHouseLabels();
-  }
-
-  // ===== Генерация таблицы («наряда») =====
-  function generatePrint(){
-    const sel = Array.from(state.selected);
-    if(sel.length===0){ alert('Не выбрано ни одного дома. Включи режим выбора и кликни по домам.'); return; }
-    const rows = sel.map((l,i)=>({
-      n: i+1,
-      address: l._address||'',
-      company: l._company||'',
-      entrances: l._entrances||'',
-      house: l._house||'',
-      color: colorByCompany(l._company||'')
-    }));
-    const html = `<!doctype html>
-<html><head><meta charset="utf-8">
-<title>Наряд — выбранные адреса</title>
-<style>
-  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial; margin:24px;}
-  h1{font-size:20px;margin:0 0 12px;}
-  .muted{color:#64748b;font-size:12px;margin-bottom:12px}
-  table{border-collapse:collapse;width:100%;}
-  th,td{border:1px solid #e5e7eb;padding:6px 8px;font-size:13px;text-align:left;vertical-align:top;}
-  th{background:#f8fafc;}
-  .sw{display:inline-block;width:14px;height:14px;border:1px solid rgba(0,0,0,.25);border-radius:3px;margin-right:6px;}
-  .pill{display:inline-block;padding:1px 6px;border-radius:999px;border:1px solid #e5e7eb;background:#f1f5f9;font-size:12px}
-  @media print{ .noprint{display:none} }
-</style></head>
-<body>
-  <h1>Наряд — выбранные адреса</h1>
-  <div class="muted">Цвета соответствуют компаниям на карте.</div>
-  <table>
-    <thead><tr><th>№</th><th>Адрес</th><th>Дом</th><th>Подъездов</th><th>Компания</th><th>Цвет</th></tr></thead>
-    <tbody>
-      ${rows.map(r=>`<tr>
-        <td>${r.n}</td>
-        <td>${escapeHtml(r.address)}</td>
-        <td>${escapeHtml(r.house||'')}</td>
-        <td>${escapeHtml(r.entrances||'')}</td>
-        <td><span class="pill">${escapeHtml(r.company||'(без компании)')}</span></td>
-        <td><span class="sw" style="background:${r.color}"></span>${r.color}</td>
-      </tr>`).join('')}
-    </tbody>
-  </table>
-  <div class="noprint" style="margin-top:12px;">
-    <button onclick="window.print()">Печать</button>
-  </div>
-</body></html>`;
-    const w = window.open('', '_blank');
-    if(!w){ alert('Разреши всплывающие окна для печати.'); return; }
-    w.document.open(); w.document.write(html); w.document.close();
-  }
-  document.getElementById('btnGenerate').addEventListener('click', generatePrint);
-
-  // ===== Экспорт карты с ТОЛЬКО выбранными =====
-  function coordsFromLatLngs(latlngs){
-    if(Array.isArray(latlngs)){
-      if(latlngs.length && latlngs[0] && typeof latlngs[0].lat === 'number'){
-        return latlngs.map(p=>[p.lat, p.lng]);
-      } else {
-        return latlngs.map(coordsFromLatLngs);
-      }
-    }
-    return latlngs;
-  }
-  function exportSelectedMap(){
-    const sel = Array.from(state.selected);
-    if(sel.length===0){ alert('Не выбрано ни одного дома.'); return; }
-    const features = sel.map(l=>{
-      const ll = l.getLatLngs ? l.getLatLngs() : [];
-      return {
-        address: l._address||'',
-        company: l._company||'',
-        entrances: l._entrances||'',
-        house: l._house||'',
-        color: colorByCompany(l._company||''),
-        latlngs: coordsFromLatLngs(ll),
-        bounds: l.getBounds ? l.getBounds() : null
-      };
-    });
-    const html = `<!doctype html>
-<html><head><meta charset="utf-8">
-<title>Карта — выбранные дома</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<style>
-  html,body{height:100%;margin:0}
-  #wrap{display:grid;grid-template-columns:280px 1fr; height:100%;}
-  #side{padding:14px;border-right:1px solid #eee;overflow:auto;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
-  #mapx{height:100%;}
-  h1{font-size:18px;margin:0 0 10px;}
-  .muted{color:#64748b;font-size:12px;margin-bottom:12px}
-  .legend{display:grid;grid-template-columns:auto 1fr; gap:6px 8px; font-size:13px;}
-  .sw{width:16px;height:16px;border-radius:4px;border:1px solid rgba(0,0,0,.2)}
-  .addr{margin-bottom:6px;font-size:13px}
-  @media print{ .noprint{display:none} #wrap{grid-template-columns:0 1fr} #side{display:none} }
-
-  .house-label{background:transparent;border:none;transform:translate(-50%,-50%);pointer-events:none;}
-  .house-label .hl{
-    display:inline-block;padding:0 3px;font-size:11px;font-weight:700;
-    background:rgba(255,255,255,.96);border:2px solid var(--hl-color, rgba(0,0,0,.25));
-    border-radius:6px;box-shadow:0 1px 3px rgba(0,0,0,.10);line-height:1.1;white-space:nowrap;user-select:none;
-  }
-</style></head>
-<body>
-<div id="wrap">
-  <div id="side">
-    <h1>Выбранные дома</h1>
-    <div class="muted">На карте показаны только они. Можно распечатать (Ctrl/Cmd+P).</div>
-    <div id="leg" class="legend"></div>
-    <hr>
-    <div id="list"></div>
-    <div class="noprint" style="margin-top:10px;"><button onclick="window.print()">Печать</button></div>
-  </div>
-  <div id="mapx"></div>
-</div>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"><\/script>
-<script>
-const data = ${JSON.stringify(features)};
-function extractHouse(address){
-  const s = String(address||'').replace(/["“”]/g,'').trim();
-  const m = s.match(/,\\s*([^,]+)\\s*$/);
-  if(m) return m[1].replace(/^(дом|д\\.)\\s*/i,'').trim();
-  const m2 = s.match(/(\\d+[0-9A-Za-zА-Яа-я\\/\\-]*?)\\s*$/);
-  return (m2 ? m2[1] : s);
-}
-const map = L.map('mapx', { zoomControl: true }).setView([51.533,46.033], 12);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:20,attribution:'&copy; OpenStreetMap'}).addTo(map);
-
-const bounds = L.latLngBounds();
-const companies = new Map();
-const polys = [];
-let labels = [];
-
-function toLatLngs(arr){
-  if(Array.isArray(arr) && arr.length && Array.isArray(arr[0]) && typeof arr[0][0]==='number'){
-    return arr.map(p=>L.latLng(p[0],p[1]));
-  }
-  return arr.map(toLatLngs);
-}
-function placeEdgeLabel(layer, color, text){
-  const b = layer.getBounds();
-  const midLat = (b.getNorth()+b.getSouth())/2;
-  const midLng = (b.getEast()+b.getWest())/2;
-  const a = {anchor: L.latLng(b.getNorth(), midLng), off:[0,-12]};
-  const pos = map.layerPointToLatLng(map.latLngToLayerPoint(a.anchor).add([a.off[0], a.off[1]]));
-  const html = '<span class="hl" style="--hl-color:'+color+'">'+text.replace(/&/g,'&amp;').replace(/</g,'&lt;')+'</span>';
-  const icon = L.divIcon({ className:'house-label', html, iconSize:null });
-  const mk = L.marker(pos, { icon, interactive:false }).addTo(map);
-  labels.push(mk);
-}
-function rebuildLabels(){
-  labels.forEach(m=>map.removeLayer(m)); labels=[];
-  polys.forEach(p=>{
-    placeEdgeLabel(p, p._color, (p._house || extractHouse(p._addr)));
-  });
-}
-data.forEach(f=>{
-  const latlngs = toLatLngs(f.latlngs);
-  const poly = L.polygon(latlngs, { color: f.color, weight:2, fillColor: f.color, fillOpacity:0.9 }).addTo(map);
-  poly._addr = f.address; poly._color = f.color; poly._house = f.house || '';
-  polys.push(poly);
-  bounds.extend(poly.getBounds());
-  const house = f.house || extractHouse(f.address);
-  placeEdgeLabel(poly, f.color, house);
-  companies.set(f.company||'(без компании)', f.color);
-  const div = document.createElement('div');
-  div.className='addr';
-  const meta = (f.house || f.entrances) ? ' — ' + [f.house?('дом: '+f.house):'', f.entrances?('подъездов: '+f.entrances):''].filter(Boolean).join(' • ') : '';
-  div.innerHTML = '<span class="sw" style="background:'+f.color+'"></span> '+(f.company||'(без компании)')+' — '+f.address+meta;
-  document.getElementById('list').appendChild(div);
-});
-// легенда
-const leg = document.getElementById('leg');
-Array.from(companies.entries()).sort((a,b)=>a[0].localeCompare(b[0],'ru')).forEach(([name,col])=>{
-  const sw = document.createElement('div'); sw.className='sw'; sw.style.background=col;
-  const label = document.createElement('div'); label.textContent = name;
-  leg.appendChild(sw); leg.appendChild(label);
-});
-if(bounds.isValid()) map.fitBounds(bounds.pad(0.15));
-rebuildLabels();
-map.on('moveend zoomend', rebuildLabels);
-<\/script>
-</body></html>`;
-    const w = window.open('', '_blank');
-    if(!w){ alert('Разреши всплывающие окна для экспорта карты.'); return; }
-    w.document.open(); w.document.write(html); w.document.close();
-  }
-  document.getElementById('btnExportMap').addEventListener('click', exportSelectedMap);
-
-  // ===== Обработчики =====
-  document.getElementById('btnBuild').addEventListener('click', ()=>{
-    const items = parseTextarea(document.getElementById('addrInput').value);
-    buildFromItems(items);
-  });
-  document.getElementById('btnBuildFile').addEventListener('click', async ()=>{
-    const f = document.getElementById('fileInput').files?.[0];
-    if(!f){ alert('Выбери файл CSV/TSV'); return; }
-    const text = await f.text();
-    const items = parseCSV(text);
-    if(items.length===0){ alert('Не удалось прочитать данные. Проверь колонки (новый или старый формат).'); return; }
-    buildFromItems(items);
-  });
-  document.getElementById('btnClear').addEventListener('click', ()=>{
-    document.getElementById('addrInput').value='';
-    clearAll(); companyColor.clear(); rebuildLegend(); hidePicker();
-  });
-  document.getElementById('btnFit').addEventListener('click', ()=>{
-    if(state.bounds.isValid()) map.fitBounds(state.bounds.pad(0.2));
-  });
-
-  // демо — новый формат
-  document.getElementById('addrInput').value = [
-    '1\tг. Саратов\tулица Рахова\t169/171\t2\tООО Альфа'
-  ].join('\n');
+  };
 })();
 </script>
 </body>
