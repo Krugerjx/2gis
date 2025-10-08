@@ -37,7 +37,7 @@
     .chip { font-size:12px; padding:4px 8px; border-radius:999px; border:1px solid #e5e7eb; background:#fff; cursor:pointer; user-select:none; }
     .chip.active { background:#111827; color:#fff; border-color:#111827; }
 
-    /* Инлайн-редактор */
+    /* Инлайн-редактор в строке списка */
     .inline-editor { grid-column: 1 / -1; background:#fff; border:1px solid #eee; border-radius:10px; padding:10px; display:none; }
     .inline-editor.open { display:block; }
     .inline-row { display:grid; grid-template-columns: 1fr; gap:8px; }
@@ -64,7 +64,7 @@
       <div class="list" id="itemsList" style="margin-top:10px;"></div>
     </div>
 
-    <!-- Старую панель редактирования скрыли: оставляем как резерв, но не используем -->
+    <!-- старая панель редактирования больше не используется -->
     <div class="panel" id="editPanel" style="display:none;"></div>
 
     <div class="panel">
@@ -137,7 +137,7 @@
     if(!Array.isArray(it.polygon) || it.polygon.length<3) return;
     const ll = ringLonLat_to_LatLng(it.polygon);
     const poly = L.polygon(ll, { color:DEFAULT_COLOR, weight:2, fillColor:DEFAULT_COLOR, fillOpacity:.9 }).addTo(map);
-    poly.on('click', ()=>onPolygonClick(it.id));
+    poly.on('click', ()=>onPolygonClick(it.id));   // << клик по дому
     poly._id = it.id;
     poly._city = it.city || '';
     state.features.set(it.id, poly);
@@ -230,7 +230,6 @@
 
         btnShow.onclick = ()=>focusItem(it.id, {expand:false, scroll:true});
         btnEdit.onclick = ()=>{
-          // открыть/закрыть инлайн-редактор
           if(state.openItemId===it.id){
             state.openItemId = null;
           } else {
@@ -239,13 +238,12 @@
           }
           stopRelink(); stopDraw(true);
           renderList();
-          // при открытии — прокрутка к элементу
           if(state.openItemId===it.id){
             div.scrollIntoView({block:'center', behavior:'smooth'});
           }
         };
 
-        // Инструменты редактирования (работают с текущим item)
+        // Инструменты редактирования
         btnRelink.onclick = ()=>{
           state.selectedId = it.id;
           stopDraw(true);
@@ -287,7 +285,6 @@
           ref.title = eTitle.value.trim();
           ref.city = eCity.value.trim();
 
-          // сохранить предварительный полигон, если есть
           if(state.previewLayer){
             const ring = state.previewLayer.getLatLngs()[0];
             ref.polygon = ringLatLng_to_LonLat(ring);
@@ -302,11 +299,9 @@
             const res = await saveDb();
             editMsg.className='muted ok';
             editMsg.textContent = res;
-            // свернуть строку после сохранения
-            state.openItemId = null;
+            state.openItemId = null;                 // свернуть после сохранения
             renderAll();
-            // оставить выбранным сохранённый элемент
-            state.selectedId = it.id;
+            state.selectedId = it.id;                // оставить выделение
             scrollToItem(it.id);
           }catch(err){
             editMsg.className='muted danger';
@@ -326,10 +321,7 @@
         host.appendChild(div);
       });
 
-    // после перерендера — если есть выбранный, прокрутить к нему (например, после клика по полигону)
-    if(state.selectedId) {
-      scrollToItem(state.selectedId);
-    }
+    if(state.selectedId) scrollToItem(state.selectedId);
   }
 
   function scrollToItem(id){
@@ -339,10 +331,8 @@
 
   function focusItem(id, {expand=true, scroll=true} = {}){
     state.selectedId = id;
-    // если слой скрыт фильтром — временно покажем его, чтобы сфокусироваться
     const layer = state.features.get(id);
     if(layer && !map.hasLayer(layer)) layer.addTo(map);
-    // открыть инлайн-редактор по желанию
     if(expand) state.openItemId = id;
     renderList();
     if(layer) map.fitBounds(layer.getBounds().pad(0.3));
@@ -350,7 +340,6 @@
   }
 
   function onPolygonClick(id){
-    // Клик по полигону: выбрать, раскрыть, проскроллить
     focusItem(id, {expand:true, scroll:true});
   }
 
@@ -365,7 +354,6 @@
   }
   function renderCityChips(){
     const host = $('cityChips'); host.innerHTML='';
-    // «Все»
     const all = document.createElement('span');
     all.className = 'chip' + (state.cityFilter.size===0 ? ' active':'');
     all.textContent = 'Все';
@@ -386,7 +374,6 @@
   }
 
   function applyCityFilter(){
-    // показываем на карте только те полигоны, чей it.city в фильтре (или фильтр пуст)
     state.labels.forEach(m=>map.removeLayer(m)); state.labels=[];
     state.db.items.forEach(it=>{
       const layer = state.features.get(it.id);
@@ -401,10 +388,8 @@
     });
   }
 
-  // --- Режим привязки (Overpass)
+  // --- Режимы редактирования
   function stopRelink(){ state.relinkMode=false; if(state.previewLayer){ map.removeLayer(state.previewLayer); state.previewLayer=null; } }
-
-  // --- Режим рисования вручную
   function startDraw(btnFinish, btnUndo, modeHintEl){
     state.drawMode=true; state.drawPoints=[]; if(state.drawLayer){ map.removeLayer(state.drawLayer); state.drawLayer=null; }
     if(btnFinish) btnFinish.style.display='';
@@ -431,7 +416,6 @@
       return;
     }
     if(state.relinkMode){
-      // Найдём редактор открытого элемента, если он есть — туда писать подсказки
       const ed = document.querySelector(`.item[data-id="${CSS.escape(state.selectedId||'')}"] .inline-editor .modeHint`);
       if(ed) ed.textContent='Ищу ближайший контур…';
       const ring = await fetchOverpassPolygon({lon:e.latlng.lng,lat:e.latlng.lat}, 500);
@@ -444,7 +428,6 @@
   });
   map.on('dblclick', ()=>{
     if(state.drawMode){
-      // Найдём текущие кнопки, чтобы скрыть их
       const wrap = document.querySelector(`.item[data-id="${CSS.escape(state.selectedId||'')}"] .inline-editor`);
       const btnFinish = wrap?.querySelector('.btnDrawFinish');
       const btnUndo   = wrap?.querySelector('.btnDrawUndo');
@@ -581,4 +564,52 @@
   async function saveDb(){
     const content = JSON.stringify({ ...state.db, updated_at:new Date().toISOString() }, null, 2);
 
-    if(state.gh
+    if(state.gh){
+      // 1-й заход: получить sha и сохранить
+      let sha = await ghGetSha(state.gh);
+      try{
+        const res = await ghPut(state.gh, content, sha || undefined);
+        return `Готово: коммит ${res.commit?.sha?.slice(0,7) || ''} в ${state.gh.repo}/${state.gh.branch}`;
+      }catch(e){
+        if(e?._status === 409){
+          sha = await ghGetSha(state.gh);
+          const res = await ghPut(state.gh, content, sha || undefined);
+          return `Готово: коммит ${res.commit?.sha?.slice(0,7) || ''} (после обновления sha)`;
+        }
+        throw e;
+      }
+    }
+
+    // fallback: скачать файл
+    const blob = new Blob([content], {type:'application/json;charset=utf-8'});
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'database.json'; a.click(); URL.revokeObjectURL(a.href);
+    throw new Error('Скачан обновлённый database.json — замени его в репозитории.');
+  }
+
+  // --- Boot
+  (async function boot(){
+    const param = new URLSearchParams(location.search).get('data');
+    state.gh = parseGhFromHash();
+    if(state.gh){
+      $('loadMsg').textContent = `Режим GitHub: ${state.gh.repo} @ ${state.gh.branch} → ${state.gh.path}`;
+    } else {
+      $('loadMsg').textContent = `Режим Pages: читаем ./database.json (без кэша)`;
+    }
+    try{
+      const baseUrl = param || new URL('database.json', location.href).toString();
+      await loadDbFromUrl(baseUrl);
+    }catch(e){
+      $('loadMsg').textContent = 'Не удалось загрузить базу. Убедись, что database.json лежит рядом с index.html (в той же папке/ветке Pages).';
+      console.warn(e);
+    }
+  })();
+
+  // обновлять подписи при движении/зуме
+  map.on('moveend zoomend', ()=>{
+    state.labels.forEach(m=>map.removeLayer(m)); state.labels=[];
+    state.features.forEach(l=>{ if(map.hasLayer(l)) placeEdgeLabel(l, extractHouse(state.db.items.find(it=>it.id===l._id)?.title)); });
+  });
+})();
+</script>
+</body>
+</html>
