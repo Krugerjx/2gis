@@ -10,7 +10,7 @@
 
   <style>
     html, body { height:100%; margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; }
-    #app { display:grid; grid-template-columns: 460px 1fr; height:100%; }
+    #app { display:grid; grid-template-columns: 480px 1fr; height:100%; }
     #sidebar { padding:14px; border-right:1px solid #eee; overflow:auto; }
     #map { width:100%; height:100%; }
     .title { font-weight:700; }
@@ -31,26 +31,41 @@
     .house-label { background:transparent; border:none; transform:translate(-50%,-50%); pointer-events:none; }
     .house-label .hl { display:inline-block; padding:0 3px; font-size:9px; font-weight:700; background:rgba(255,255,255,.96); border:2px solid rgba(0,0,0,.25); border-radius:6px; box-shadow:0 1px 3px rgba(0,0,0,.10); line-height:1.1; white-space:nowrap; user-select:none; }
     .ok { color:#067647; } .danger { color:#b42318; }
+
+    /* Чипы городов */
+    .chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+    .chip { font-size:12px; padding:4px 8px; border-radius:999px; border:1px solid #e5e7eb; background:#fff; cursor:pointer; user-select:none; }
+    .chip.active { background:#111827; color:#fff; border-color:#111827; }
   </style>
 </head>
 <body>
 <div id="app">
   <div id="sidebar">
     <div class="panel">
-      <div class="row" style="justify-content:space-between;">
+      <div class="row" style="justify-content:space-between; align-items:center;">
         <div class="title">Адреса из базы</div>
-        <span id="countLbl" class="badge"></span>
+        <div class="row" style="gap:8px;">
+          <button id="btnAdd" class="ghost">Добавить адрес</button>
+          <span id="countLbl" class="badge"></span>
+        </div>
       </div>
       <div class="muted" id="loadMsg" style="margin-top:6px;"></div>
+
+      <div class="label" style="margin-top:10px;">Фильтр по городам</div>
+      <div id="cityChips" class="chips"></div>
+
       <div class="list" id="itemsList" style="margin-top:10px;"></div>
     </div>
 
     <div class="panel" id="editPanel">
       <div class="title" style="margin-bottom:6px;">Редактирование</div>
-      <div id="editHint" class="muted">Нажми ✏️ у адреса в списке выше.</div>
+      <div id="editHint" class="muted">Нажми ✏️ у адреса в списке выше или «Добавить адрес».</div>
       <div id="editForm" style="display:none;">
         <div class="label">Название (для UI/нарядов)</div>
         <input id="eTitle" type="text" placeholder="г. Саратов, ул. Рахова, 169/171" />
+        <div class="label" style="margin-top:8px;">Город</div>
+        <input id="eCity" type="text" placeholder="Саратов" />
+
         <div class="row" style="margin-top:8px;">
           <button id="btnRelink" class="ghost">Привязать к OSM</button>
           <button id="btnDraw" class="ghost">Нарисовать вручную</button>
@@ -102,7 +117,8 @@
     drawPoints: [],
     drawLayer: null,
 
-    gh: null // {repo, branch, path, token}
+    gh: null, // {repo, branch, path, token}
+    cityFilter: new Set() // выбранные города (пусто = все)
   };
 
   // --- Helpers
@@ -129,28 +145,44 @@
     const mk = L.marker(pos, { icon, interactive:false }).addTo(map);
     state.labels.push(mk);
   }
+
   function drawItem(it){
     if(!Array.isArray(it.polygon) || it.polygon.length<3) return;
     const ll = ringLonLat_to_LatLng(it.polygon);
     const poly = L.polygon(ll, { color:DEFAULT_COLOR, weight:2, fillColor:DEFAULT_COLOR, fillOpacity:.9 }).addTo(map);
     poly.on('click', ()=>focusItem(it.id));
     poly._id = it.id;
+    poly._city = it.city || '';
     state.features.set(it.id, poly);
     state.bounds.extend(poly.getBounds());
     placeEdgeLabel(poly, extractHouse(it.title));
   }
+
   function renderAll(){
     clearMap();
     state.db.items.forEach(drawItem);
-    if(state.bounds.isValid()) map.fitBounds(state.bounds.pad(0.15));
+    applyCityFilter(); // скрыть лишние по фильтру
+    if(visibleBounds().isValid()) map.fitBounds(visibleBounds().pad(0.15));
+    renderCityChips();
     renderList();
+  }
+
+  function visibleBounds(){
+    const b = L.latLngBounds();
+    state.features.forEach(l=>{ if(map.hasLayer(l)) b.extend(l.getBounds()); });
+    return b;
   }
 
   // --- UI: список/редактор
   function renderList(){
     const host = $('itemsList'); host.innerHTML='';
-    $('countLbl').textContent = state.db.items.length;
-    state.db.items.forEach(it=>{
+    const filtered = state.db.items.filter(it => state.cityFilter.size===0 || state.cityFilter.has((it.city||'').trim().toLowerCase()));
+    $('countLbl').textContent = filtered.length;
+
+    filtered
+      .slice()
+      .sort((a,b)=> (a.city||'').localeCompare(b.city||'', 'ru') || (a.title||'').localeCompare(b.title||'', 'ru'))
+      .forEach(it=>{
       const div=document.createElement('div');
       div.className='item' + (state.selectedId===it.id?' active':'');
       div.innerHTML = `
@@ -159,31 +191,99 @@
           <button class="ghost" title="Показать">Показать</button>
           <button class="ghost" title="Редактировать">✏️</button>
         </div>
-        <div class="muted" style="grid-column:1 / -1">${it.polygon?'Контур есть':'Контур не задан'}</div>
+        <div class="muted" style="grid-column:1 / -1">
+          ${(it.city && it.city.trim()) ? esc(it.city) : 'Без города'} • ${it.polygon?'Контур есть':'Контур не задан'}
+        </div>
       `;
       const [btnShow, btnEdit] = div.querySelectorAll('button');
       btnShow.onclick = ()=>focusItem(it.id);
       btnEdit.onclick = ()=>openEditor(it.id);
       host.appendChild(div);
     });
+
     const hasSel = !!state.selectedId;
     $('editForm').style.display = hasSel ? '' : 'none';
     $('editHint').style.display = hasSel ? 'none' : '';
   }
+
   function focusItem(id){
     state.selectedId = id;
-    renderList();
+    // если слой скрыт фильтром — временно покажем его, чтобы можно было сфокусироваться
     const layer = state.features.get(id);
-    if(layer) map.fitBounds(layer.getBounds().pad(0.3));
+    if(layer && !map.hasLayer(layer)) layer.addTo(map);
+    renderList();
+    if(layer) map.fitBounds(layer.getBounds().pad(0.3)); else alert('У записи не задан контур.');
   }
+
   const currentItem = () => state.db.items.find(x=>x.id===state.selectedId)||null;
+
   function openEditor(id){
     state.selectedId = id;
     const it=currentItem();
     $('eTitle').value = it?.title || '';
+    $('eCity').value = it?.city || '';
     $('editMsg').textContent=''; $('modeHint').textContent='';
     stopRelink(); stopDraw(true);
     renderList();
+  }
+
+  // --- Добавить адрес
+  $('btnAdd').onclick = ()=>{
+    const id = String(crypto?.randomUUID?.() || (Date.now()+Math.random()));
+    const it = { id, title:'Новый адрес', city:'', polygon:null };
+    state.db.items.push(it);
+    state.selectedId = id;
+    renderAll();
+    openEditor(id);
+  };
+
+  // --- Фильтр городов (чипы)
+  function uniqueCities(){
+    const set = new Set();
+    state.db.items.forEach(it=>{
+      const c = String(it.city||'').trim();
+      if(c) set.add(c);
+    });
+    return Array.from(set).sort((a,b)=>a.localeCompare(b,'ru'));
+  }
+  function renderCityChips(){
+    const host = $('cityChips'); host.innerHTML='';
+    // «Все»
+    const all = document.createElement('span');
+    all.className = 'chip' + (state.cityFilter.size===0 ? ' active':'');
+    all.textContent = 'Все';
+    all.onclick = ()=>{ state.cityFilter.clear(); applyCityFilter(); renderList(); renderCityChips(); };
+    host.appendChild(all);
+
+    uniqueCities().forEach(city=>{
+      const key = city.trim().toLowerCase();
+      const chip = document.createElement('span');
+      chip.className = 'chip' + (state.cityFilter.has(key)?' active':'');
+      chip.textContent = city;
+      chip.onclick = ()=>{
+        if(state.cityFilter.has(key)) state.cityFilter.delete(key); else state.cityFilter.add(key);
+        // если пусто — это «Все»
+        if(state.cityFilter.size===0) { /* all */ }
+        applyCityFilter(); renderList(); renderCityChips();
+      };
+      host.appendChild(chip);
+    });
+  }
+
+  function applyCityFilter(){
+    // показываем на карте только те полигоны, чей it.city в фильтре (или фильтр пуст)
+    state.labels.forEach(m=>map.removeLayer(m)); state.labels=[];
+    state.db.items.forEach(it=>{
+      const layer = state.features.get(it.id);
+      if(!layer) return;
+      const pass = (state.cityFilter.size===0) || state.cityFilter.has((it.city||'').trim().toLowerCase());
+      if(pass){
+        if(!map.hasLayer(layer)) layer.addTo(map);
+        placeEdgeLabel(layer, extractHouse(it.title));
+      } else {
+        if(map.hasLayer(layer)) map.removeLayer(layer);
+      }
+    });
   }
 
   // --- Режим привязки (Overpass)
@@ -235,6 +335,7 @@
   $('btnSave').onclick = async ()=>{
     const it=currentItem(); if(!it) return;
     it.title = $('eTitle').value.trim();
+    it.city = $('eCity').value.trim();
     if(state.previewLayer){
       const ring = state.previewLayer.getLatLngs()[0];
       it.polygon = ringLatLng_to_LonLat(ring);
@@ -248,7 +349,7 @@
       $('editMsg').textContent = err.message; $('editMsg').className='muted danger';
     }
   };
-  $('btnFit').onclick = ()=>{ if(state.bounds.isValid()) map.fitBounds(state.bounds.pad(0.15)); };
+  $('btnFit').onclick = ()=>{ const b=visibleBounds(); if(b.isValid()) map.fitBounds(b.pad(0.15)); };
 
   // --- Overpass helper
   async function fetchOverpassPolygon({ lon, lat }, radius = 500){
@@ -283,6 +384,7 @@
       items: Array.isArray(j.items) ? j.items.map(x=>({
         id: String(x.id || (crypto?.randomUUID?.() || (Date.now()+Math.random()))),
         title: x.title || '',
+        city: x.city || '',
         polygon: Array.isArray(x.polygon) ? x.polygon : null
       })) : []
     };
@@ -295,7 +397,7 @@
     renderAll();
   }
 
-  // --- Опционально: автокоммит в GitHub через hash (#gh=...&token=...)
+  // --- GitHub API (опциональный прямой коммит)
   function parseGhFromHash(){
     const h = new URLSearchParams(location.hash.slice(1));
     const gh = h.get('gh'); const token = h.get('token');
@@ -307,7 +409,6 @@
     return { repo: repoPart, branch, path, token };
   }
 
-  // ---- безопасное base64 для Unicode (Safari-friendly)
   function toBase64Unicode(str){
     const bytes = new TextEncoder().encode(str);
     let bin = '';
@@ -365,7 +466,6 @@
 
   async function saveDb(){
     const content = JSON.stringify({ ...state.db, updated_at:new Date().toISOString() }, null, 2);
-    // commit to GitHub if gh hash is present
     if(state.gh){
       const sha = await ghGetSha(state.gh);
       const res = await ghPut(state.gh, content, sha);
@@ -379,7 +479,6 @@
 
   // --- Boot
   (async function boot(){
-    // data=... (raw URL) или database.json рядом
     const param = new URLSearchParams(location.search).get('data');
     state.gh = parseGhFromHash();
     if(state.gh){
@@ -399,10 +498,7 @@
   // обновлять подписи при движении карты
   map.on('moveend zoomend', ()=>{
     state.labels.forEach(m=>map.removeLayer(m)); state.labels=[];
-    state.db.items.forEach(it=>{
-      const l = state.features.get(it.id);
-      if(l) placeEdgeLabel(l, extractHouse(it.title));
-    });
+    state.features.forEach(l=>{ if(map.hasLayer(l)) placeEdgeLabel(l, extractHouse(state.db.items.find(it=>it.id===l._id)?.title)); });
   });
 })();
 </script>
