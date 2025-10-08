@@ -10,7 +10,7 @@
 
   <style>
     html, body { height:100%; margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; }
-    #app { display:grid; grid-template-columns: 480px 1fr; height:100%; }
+    #app { display:grid; grid-template-columns: 520px 1fr; height:100%; }
     #sidebar { padding:14px; border-right:1px solid #eee; overflow:auto; }
     #map { width:100%; height:100%; }
     .title { font-weight:700; }
@@ -37,17 +37,51 @@
     .chip { font-size:12px; padding:4px 8px; border-radius:999px; border:1px solid #e5e7eb; background:#fff; cursor:pointer; user-select:none; }
     .chip.active { background:#111827; color:#fff; border-color:#111827; }
 
-    /* Инлайн-редактор в строке списка */
+    /* Инлайн-редактор */
     .inline-editor { grid-column: 1 / -1; background:#fff; border:1px solid #eee; border-radius:10px; padding:10px; display:none; }
     .inline-editor.open { display:block; }
     .inline-row { display:grid; grid-template-columns: 1fr; gap:8px; }
     .inline-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:6px; }
     .inline-footer { display:flex; align-items:center; gap:8px; margin-top:8px; }
+
+    /* Поиск */
+    .tabs { display:flex; gap:6px; }
+    .tab { padding:6px 10px; border:1px solid #e5e7eb; border-radius:999px; cursor:pointer; }
+    .tab.active { background:#111827; color:#fff; border-color:#111827; }
+    .search-wrap { display:grid; grid-template-columns: 1fr auto; gap:8px; align-items:center; margin-top:8px; }
+    .search-input { padding:10px 12px; border-radius:10px; border:1px solid #e5e7eb; font-size:14px; }
+    .search-hint { font-size:12px; color:#64748b; }
+    mark { background:#fef08a; padding:0 2px; border-radius:3px; }
+
+    .suggest { margin-top:8px; display:flex; flex-direction:column; gap:6px; }
+    .sg-item { border:1px dashed #e5e7eb; border-radius:10px; padding:8px; background:#fff; }
+    .sg-top { display:flex; justify-content:space-between; gap:8px; align-items:center; }
+    .sg-title { font-weight:600; }
   </style>
 </head>
 <body>
 <div id="app">
   <div id="sidebar">
+
+    <!-- 🔎 Поиск -->
+    <div class="panel">
+      <div class="title" style="margin-bottom:8px;">Поиск</div>
+      <div class="tabs">
+        <span id="tabLocal" class="tab active">В базе</span>
+        <span id="tabGlobal" class="tab">На карте (OSM)</span>
+      </div>
+      <div class="search-wrap">
+        <input id="searchBox" class="search-input" type="text" placeholder="Город, улица, дом (⌘/Ctrl+K)" />
+        <button id="searchClear" class="ghost">Очистить</button>
+      </div>
+      <div class="row" style="justify-content:space-between; margin-top:6px;">
+        <div class="search-hint">Enter — перейти к первому совпадению • Esc — очистить</div>
+        <span id="searchCount" class="badge"></span>
+      </div>
+      <!-- подсказки OSM -->
+      <div id="suggestBox" class="suggest" style="display:none;"></div>
+    </div>
+
     <div class="panel">
       <div class="row" style="justify-content:space-between; align-items:center;">
         <div class="title">Адреса из базы</div>
@@ -64,7 +98,6 @@
       <div class="list" id="itemsList" style="margin-top:10px;"></div>
     </div>
 
-    <!-- старая панель редактирования больше не используется -->
     <div class="panel" id="editPanel" style="display:none;"></div>
 
     <div class="panel">
@@ -93,9 +126,8 @@
     db: {version:1, updated_at:new Date().toISOString(), items:[]},
     features: new Map(), // id -> polygon layer
     labels: [],
-    bounds: L.latLngBounds(),
-    selectedId: null,     // текущий выбранный item
-    openItemId: null,     // у какого item открыт инлайн-редактор
+    selectedId: null,
+    openItemId: null,
 
     relinkMode: false,
     previewLayer: null,
@@ -105,11 +137,17 @@
     drawLayer: null,
 
     gh: null, // {repo, branch, path, token}
-    cityFilter: new Set() // выбранные города (пусто = все)
+    cityFilter: new Set(), // выбранные города (пусто = все)
+
+    // поиск
+    searchMode: 'local', // 'local' | 'global'
+    searchQuery: '',
+    searchMarker: null
   };
 
   // --- Helpers
   const esc = s => String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const norm = s => String(s||'').toLowerCase().replaceAll('ё','е').trim();
   const ringLonLat_to_LatLng = ring => ring.map(([x,y])=>[y,x]);
   const ringLatLng_to_LonLat = ring => ring.map(p=>[p.lng, p.lat]);
 
@@ -123,7 +161,6 @@
     state.features.forEach(l=>map.removeLayer(l));
     state.features.clear();
     state.labels.forEach(m=>map.removeLayer(m)); state.labels=[];
-    state.bounds = L.latLngBounds();
   }
   function placeEdgeLabel(layer, text){
     const b=layer.getBounds();
@@ -137,36 +174,168 @@
     if(!Array.isArray(it.polygon) || it.polygon.length<3) return;
     const ll = ringLonLat_to_LatLng(it.polygon);
     const poly = L.polygon(ll, { color:DEFAULT_COLOR, weight:2, fillColor:DEFAULT_COLOR, fillOpacity:.9 }).addTo(map);
-    poly.on('click', ()=>onPolygonClick(it.id));   // << клик по дому
-    poly._id = it.id;
-    poly._city = it.city || '';
+    poly.on('click', ()=>onPolygonClick(it.id));
     state.features.set(it.id, poly);
-    state.bounds.extend(poly.getBounds());
     placeEdgeLabel(poly, extractHouse(it.title));
   }
 
   function renderAll(){
     clearMap();
     state.db.items.forEach(drawItem);
-    applyCityFilter(); // скрыть лишние по фильтру
-    if(visibleBounds().isValid()) map.fitBounds(visibleBounds().pad(0.15));
+    applyFiltersOnMap();
     renderCityChips();
     renderList();
   }
 
-  function visibleBounds(){
-    const b = L.latLngBounds();
-    state.features.forEach(l=>{ if(map.hasLayer(l)) b.extend(l.getBounds()); });
-    return b;
-  }
-
   const currentItem = () => state.db.items.find(x=>x.id===state.selectedId)||null;
 
-  // --- UI: список с инлайн-редактором
+  // ---------- Поиск: UI
+  const tabLocal = $('tabLocal');
+  const tabGlobal = $('tabGlobal');
+  const searchBox = $('searchBox');
+  const searchClear = $('searchClear');
+  const searchCount = $('searchCount');
+  const suggestBox = $('suggestBox');
+
+  tabLocal.onclick = ()=>{ state.searchMode='local'; tabLocal.classList.add('active'); tabGlobal.classList.remove('active'); suggestBox.style.display='none'; setSearch(searchBox.value); };
+  tabGlobal.onclick = ()=>{ state.searchMode='global'; tabGlobal.classList.add('active'); tabLocal.classList.remove('active'); setSearch(searchBox.value); };
+
+  function setSearch(v){
+    state.searchQuery = v;
+    if(state.searchMode==='local'){
+      suggestBox.style.display='none';
+      renderList(); applyFiltersOnMap();
+    }else{
+      renderList(); applyFiltersOnMap(); // чтобы скрывать несоответствующие полигоны при глобальном поиске тоже
+      debouncedNominatim(v);
+    }
+  }
+
+  searchBox.addEventListener('input', (e)=> setSearch(e.target.value));
+  searchBox.addEventListener('keydown', (e)=>{
+    if(e.key==='Enter'){
+      if(state.searchMode==='local'){
+        const first = document.querySelector('.item');
+        if(first){ focusItem(first.dataset.id, {expand:true, scroll:true}); }
+      }
+    } else if(e.key==='Escape'){
+      searchBox.value=''; setSearch('');
+    }
+  });
+  searchClear.onclick = ()=>{ searchBox.value=''; setSearch(''); searchBox.focus(); };
+
+  // глобальная горячая клавиша
+  window.addEventListener('keydown', (e)=>{
+    if((e.ctrlKey || e.metaKey) && e.key.toLowerCase()==='k'){
+      e.preventDefault(); searchBox.focus(); searchBox.select();
+    }
+  });
+
+  // ---------- Nominatim (OSM) — подсказки
+  let nomiTimer=null;
+  async function nominatim(q){
+    if(!q || q.trim().length<3){ suggestBox.style.display='none'; suggestBox.innerHTML=''; return; }
+    const url = new URL('https://nominatim.openstreetmap.org/search');
+    url.searchParams.set('q', q);
+    url.searchParams.set('format','jsonv2');
+    url.searchParams.set('limit','8');
+    url.searchParams.set('addressdetails','1');
+    url.searchParams.set('accept-language','ru');
+
+    const r = await fetch(url.toString(), { headers:{'Accept':'application/json'} });
+    if(!r.ok) return;
+    const arr = await r.json();
+
+    suggestBox.style.display='';
+    suggestBox.innerHTML = '';
+    arr.forEach((it, idx)=>{
+      const city = it.address?.city || it.address?.town || it.address?.village || it.address?.municipality || '';
+      const road = it.address?.road || it.address?.pedestrian || it.address?.footway || '';
+      const house = it.address?.house_number || '';
+      const title = ['г. '+city, road && ('ул. '+road), house].filter(Boolean).join(', ');
+      const div = document.createElement('div');
+      div.className='sg-item';
+      div.innerHTML = `
+        <div class="sg-top">
+          <div class="sg-title">${esc(title || it.display_name)}</div>
+          <button class="ghost sg-zoom">Показать</button>
+        </div>
+        <div class="muted" style="margin-top:4px;">${esc(it.display_name)}</div>
+        <div class="row" style="margin-top:6px;">
+          <button class="primary sg-add">Добавить как новый адрес</button>
+        </div>
+      `;
+      const btnZoom = div.querySelector('.sg-zoom');
+      const btnAdd  = div.querySelector('.sg-add');
+      btnZoom.onclick = ()=> zoomToSuggestion(it);
+      btnAdd.onclick  = ()=> addFromSuggestion(it);
+      suggestBox.appendChild(div);
+    });
+    searchCount.textContent = `${arr.length} в OSM`;
+  }
+  function debouncedNominatim(q){
+    clearTimeout(nomiTimer);
+    nomiTimer = setTimeout(()=>nominatim(q), 250);
+  }
+
+  function zoomToSuggestion(sg){
+    const lat = +sg.lat, lon = +sg.lon;
+    if(state.searchMarker){ map.removeLayer(state.searchMarker); state.searchMarker=null; }
+    state.searchMarker = L.marker([lat,lon]).addTo(map).bindPopup(esc(sg.display_name)+'<br/><button id="ppAddBtn">Добавить как новый</button>').openPopup();
+    map.setView([lat,lon], 18);
+    // кнопка в попапе
+    setTimeout(()=>{
+      const btn = document.getElementById('ppAddBtn');
+      if(btn) btn.onclick = ()=> addFromSuggestion(sg);
+    }, 0);
+  }
+
+  async function addFromSuggestion(sg){
+    const city = sg.address?.city || sg.address?.town || sg.address?.village || sg.address?.municipality || '';
+    const road = sg.address?.road || sg.address?.pedestrian || sg.address?.footway || '';
+    const house = sg.address?.house_number || '';
+    const title = ['г. '+(city||'').trim(), road && ('ул. '+road), house].filter(Boolean).join(', ').replace(/\s+,/g,',');
+
+    const id = String(crypto?.randomUUID?.() || (Date.now()+Math.random()));
+    const it = { id, title: title || sg.display_name, city: city || '', polygon: null };
+    state.db.items.push(it);
+    state.selectedId = id;
+    state.openItemId = id;
+
+    // попробуем сразу найти контур здания вокруг точки
+    try{
+      const ring = await fetchOverpassPolygon({lon:+sg.lon, lat:+sg.lat}, 400);
+      if(ring){ it.polygon = ring; }
+    }catch(_){}
+
+    renderAll();
+    scrollToItem(id);
+  }
+
+  // ---------- Список + редактор
+  function matchesSearchLocal(it){
+    if(state.searchMode!=='local' || !state.searchQuery) return true;
+    const q = norm(state.searchQuery);
+    const hay = norm(`${it.city} ${it.title}`);
+    return hay.includes(q);
+  }
+  function highlightLocal(text){
+    if(state.searchMode!=='local' || !state.searchQuery) return esc(text||'');
+    const raw = String(text||'');
+    const s = norm(raw), q = norm(state.searchQuery);
+    const i = s.indexOf(q); if(i<0) return esc(raw);
+    return esc(raw.slice(0,i)) + '<mark>' + esc(raw.slice(i, i + state.searchQuery.length)) + '</mark>' + esc(raw.slice(i + state.searchQuery.length));
+  }
+
   function renderList(){
     const host = $('itemsList'); host.innerHTML='';
-    const filtered = state.db.items.filter(it => state.cityFilter.size===0 || state.cityFilter.has((it.city||'').trim().toLowerCase()));
-    $('countLbl').textContent = filtered.length;
+    const filtered = state.db.items.filter(it =>
+      (state.cityFilter.size===0 || state.cityFilter.has((it.city||'').trim().toLowerCase()))
+      && matchesSearchLocal(it)
+    );
+
+    $('countLbl').textContent = state.db.items.length;
+    if(state.searchMode==='local'){ $('searchCount').textContent = `${filtered.length} совпад.`; }
 
     filtered
       .slice()
@@ -176,15 +345,14 @@
         div.className='item' + (state.selectedId===it.id?' active':'');
         div.dataset.id = it.id;
 
-        // Верхняя строка
         div.innerHTML = `
-          <div class="title">${esc(it.title||'(без названия)')}</div>
+          <div class="title">${highlightLocal(it.title||'(без названия)')}</div>
           <div class="act">
             <button class="ghost" title="Показать">Показать</button>
             <button class="ghost" title="Редактировать">✏️</button>
           </div>
           <div class="muted" style="grid-column:1 / -1">
-            ${(it.city && it.city.trim()) ? esc(it.city) : 'Без города'} • ${it.polygon && it.polygon.length>=3 ? 'Контур есть' : 'Контур не задан'}
+            ${it.city ? highlightLocal(it.city) : 'Без города'} • ${it.polygon && it.polygon.length>=3 ? 'Контур есть' : 'Контур не задан'}
           </div>
           <div class="inline-editor ${state.openItemId===it.id?'open':''}">
             <div class="inline-row">
@@ -213,9 +381,7 @@
           </div>
         `;
 
-        // Кнопки
         const [btnShow, btnEdit] = div.querySelectorAll('.act button');
-        const editor = div.querySelector('.inline-editor');
         const eTitle = div.querySelector('.eTitle');
         const eCity  = div.querySelector('.eCity');
         const btnRelink = div.querySelector('.btnRelink');
@@ -230,20 +396,13 @@
 
         btnShow.onclick = ()=>focusItem(it.id, {expand:false, scroll:true});
         btnEdit.onclick = ()=>{
-          if(state.openItemId===it.id){
-            state.openItemId = null;
-          } else {
-            state.openItemId = it.id;
-            state.selectedId = it.id;
-          }
+          if(state.openItemId===it.id){ state.openItemId=null; }
+          else { state.openItemId=it.id; state.selectedId=it.id; }
           stopRelink(); stopDraw(true);
           renderList();
-          if(state.openItemId===it.id){
-            div.scrollIntoView({block:'center', behavior:'smooth'});
-          }
+          if(state.openItemId===it.id) div.scrollIntoView({block:'center', behavior:'smooth'});
         };
 
-        // Инструменты редактирования
         btnRelink.onclick = ()=>{
           state.selectedId = it.id;
           stopDraw(true);
@@ -284,7 +443,6 @@
           if(!ref) return;
           ref.title = eTitle.value.trim();
           ref.city = eCity.value.trim();
-
           if(state.previewLayer){
             const ring = state.previewLayer.getLatLngs()[0];
             ref.polygon = ringLatLng_to_LonLat(ring);
@@ -299,23 +457,21 @@
             const res = await saveDb();
             editMsg.className='muted ok';
             editMsg.textContent = res;
-            state.openItemId = null;                 // свернуть после сохранения
+            state.openItemId = null;
             renderAll();
-            state.selectedId = it.id;                // оставить выделение
+            state.selectedId = it.id;
             scrollToItem(it.id);
           }catch(err){
             editMsg.className='muted danger';
             editMsg.textContent = err.message;
           }
         };
-
         btnCancel.onclick = ()=>{
           stopRelink();
           stopDraw(true, btnDrawFinish, btnDrawUndo);
           if(state.previewLayer){ map.removeLayer(state.previewLayer); state.previewLayer=null; }
           state.openItemId = null;
-          renderList();
-          scrollToItem(it.id);
+          renderList(); scrollToItem(it.id);
         };
 
         host.appendChild(div);
@@ -339,11 +495,27 @@
     if(scroll) scrollToItem(id);
   }
 
-  function onPolygonClick(id){
-    focusItem(id, {expand:true, scroll:true});
+  function onPolygonClick(id){ focusItem(id, {expand:true, scroll:true}); }
+
+  // фильтры на карте (город + локальный поиск)
+  function applyFiltersOnMap(){
+    state.labels.forEach(m=>map.removeLayer(m)); state.labels=[];
+    state.db.items.forEach(it=>{
+      const layer = state.features.get(it.id);
+      if(!layer) return;
+      const passCity = (state.cityFilter.size===0) || state.cityFilter.has((it.city||'').trim().toLowerCase());
+      const passSearch = (state.searchMode!=='local') || matchesSearchLocal(it);
+      const pass = passCity && passSearch;
+      if(pass){
+        if(!map.hasLayer(layer)) layer.addTo(map);
+        placeEdgeLabel(layer, extractHouse(it.title));
+      } else {
+        if(map.hasLayer(layer)) map.removeLayer(layer);
+      }
+    });
   }
 
-  // --- Фильтр городов (чипы)
+  // --- Чипы городов
   function uniqueCities(){
     const set = new Set();
     state.db.items.forEach(it=>{
@@ -357,7 +529,7 @@
     const all = document.createElement('span');
     all.className = 'chip' + (state.cityFilter.size===0 ? ' active':'');
     all.textContent = 'Все';
-    all.onclick = ()=>{ state.cityFilter.clear(); applyCityFilter(); renderList(); renderCityChips(); };
+    all.onclick = ()=>{ state.cityFilter.clear(); applyFiltersOnMap(); renderList(); renderCityChips(); };
     host.appendChild(all);
 
     uniqueCities().forEach(city=>{
@@ -367,28 +539,13 @@
       chip.textContent = city;
       chip.onclick = ()=>{
         if(state.cityFilter.has(key)) state.cityFilter.delete(key); else state.cityFilter.add(key);
-        applyCityFilter(); renderList(); renderCityChips();
+        applyFiltersOnMap(); renderList(); renderCityChips();
       };
       host.appendChild(chip);
     });
   }
 
-  function applyCityFilter(){
-    state.labels.forEach(m=>map.removeLayer(m)); state.labels=[];
-    state.db.items.forEach(it=>{
-      const layer = state.features.get(it.id);
-      if(!layer) return;
-      const pass = (state.cityFilter.size===0) || state.cityFilter.has((it.city||'').trim().toLowerCase());
-      if(pass){
-        if(!map.hasLayer(layer)) layer.addTo(map);
-        placeEdgeLabel(layer, extractHouse(it.title));
-      } else {
-        if(map.hasLayer(layer)) map.removeLayer(layer);
-      }
-    });
-  }
-
-  // --- Режимы редактирования
+  // --- Режимы рисования/привязки
   function stopRelink(){ state.relinkMode=false; if(state.previewLayer){ map.removeLayer(state.previewLayer); state.previewLayer=null; } }
   function startDraw(btnFinish, btnUndo, modeHintEl){
     state.drawMode=true; state.drawPoints=[]; if(state.drawLayer){ map.removeLayer(state.drawLayer); state.drawLayer=null; }
@@ -443,13 +600,12 @@
     state.db.items.push(it);
     state.selectedId = id;
     state.openItemId = id; // сразу открыть редактор
-    renderAll();
-    scrollToItem(id);
+    renderAll(); scrollToItem(id);
   };
 
-  $('btnFit').onclick = ()=>{ const b=visibleBounds(); if(b.isValid()) map.fitBounds(b.pad(0.15)); };
+  $('btnFit').onclick = ()=>{ map.fitWorld(); };
 
-  // --- Overpass helper
+  // --- Overpass helper (поиск контура здания)
   async function fetchOverpassPolygon({ lon, lat }, radius = 500){
     const EPS=['https://overpass.kumi.systems/api/interpreter','https://overpass-api.de/api/interpreter','https://overpass.openstreetmap.ru/api/interpreter'];
     const q=`[out:json][timeout:60];(way["building"](around:${radius},${lat},${lon});relation["building"](around:${radius},${lat},${lon}););out body geom;`;
@@ -474,7 +630,7 @@
     return null;
   }
 
-  // --- Загрузка базы (Pages)
+  // --- Загрузка базы
   function normalizeDb(j){
     return {
       version: j.version||1,
@@ -495,77 +651,40 @@
     renderAll();
   }
 
-  // --- GitHub API
+  // --- GitHub API (с ретраем 409)
   function parseGhFromHash(){
     const h = new URLSearchParams(location.hash.slice(1));
     const gh = h.get('gh'); const token = h.get('token');
     if(!gh || !token) return null;
-    // gh format: owner/repo@branch:path/to/database.json
     const [repoPart, bp] = gh.split('@');
     const [branch, ...pathParts] = (bp||'main:database.json').split(':');
     const path = pathParts.join(':') || 'database.json';
     return { repo: repoPart, branch, path, token };
   }
-  function encodePathForContentsAPI(path){
-    return path.split('/').map(encodeURIComponent).join('/');
-  }
+  function encodePathForContentsAPI(path){ return path.split('/').map(encodeURIComponent).join('/'); }
   function toBase64Unicode(str){
     const bytes = new TextEncoder().encode(str);
-    let bin = '';
-    const CHUNK = 0x8000;
-    for (let i = 0; i < bytes.length; i += CHUNK) {
-      bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-    }
+    let bin = ''; const CHUNK = 0x8000;
+    for (let i = 0; i < bytes.length; i += CHUNK) { bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK)); }
     return btoa(bin);
   }
   async function ghGetSha({repo,branch,path,token}){
     const url = `https://api.github.com/repos/${repo}/contents/${encodePathForContentsAPI(path)}?ref=${encodeURIComponent(branch)}`;
-    const r = await fetch(url, {
-      method: 'GET',
-      headers:{
-        'Authorization':`Bearer ${token}`,
-        'Accept':'application/vnd.github+json',
-        'X-GitHub-Api-Version':'2022-11-28'
-      }
-    });
+    const r = await fetch(url, { method:'GET', headers:{ 'Authorization':`Bearer ${token}`, 'Accept':'application/vnd.github+json', 'X-GitHub-Api-Version':'2022-11-28' } });
     if(r.status===404) return null;
-    if(!r.ok){
-      const t = await r.text().catch(()=> '');
-      throw new Error(`GitHub GET ${r.status}: ${t}`);
-    }
+    if(!r.ok){ const t=await r.text().catch(()=> ''); throw new Error(`GitHub GET ${r.status}: ${t}`); }
     const j = await r.json(); return j.sha || null;
   }
   async function ghPut({repo,branch,path,token}, content, sha){
     const url = `https://api.github.com/repos/${repo}/contents/${encodePathForContentsAPI(path)}`;
-    const body = {
-      message:`update ${path} via leaflet`,
-      branch,
-      content: toBase64Unicode(content),
-      ...(sha ? { sha } : {})
-    };
-    const r = await fetch(url, {
-      method: 'PUT',
-      headers:{
-        'Authorization':`Bearer ${token}`,
-        'Accept':'application/vnd.github+json',
-        'Content-Type':'application/json',
-        'X-GitHub-Api-Version':'2022-11-28'
-      },
-      body: JSON.stringify(body)
-    });
-    if(!r.ok){
-      const txt = await r.text().catch(()=> '');
-      const err = new Error(`GitHub PUT ${r.status}: ${txt || 'Failed to save'}`);
-      err._status = r.status;
-      throw err;
-    }
+    const body = { message:`update ${path} via leaflet`, branch, content: toBase64Unicode(content), ...(sha?{sha}:{}) };
+    const r = await fetch(url, { method:'PUT', headers:{ 'Authorization':`Bearer ${token}`, 'Accept':'application/vnd.github+json', 'Content-Type':'application/json', 'X-GitHub-Api-Version':'2022-11-28' }, body: JSON.stringify(body) });
+    if(!r.ok){ const txt=await r.text().catch(()=> ''); const err=new Error(`GitHub PUT ${r.status}: ${txt||'Failed to save'}`); err._status=r.status; throw err; }
     return await r.json();
   }
   async function saveDb(){
     const content = JSON.stringify({ ...state.db, updated_at:new Date().toISOString() }, null, 2);
-
     if(state.gh){
-      // 1-й заход: получить sha и сохранить
       let sha = await ghGetSha(state.gh);
       try{
         const res = await ghPut(state.gh, content, sha || undefined);
@@ -579,8 +698,6 @@
         throw e;
       }
     }
-
-    // fallback: скачать файл
     const blob = new Blob([content], {type:'application/json;charset=utf-8'});
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'database.json'; a.click(); URL.revokeObjectURL(a.href);
     throw new Error('Скачан обновлённый database.json — замени его в репозитории.');
@@ -590,11 +707,8 @@
   (async function boot(){
     const param = new URLSearchParams(location.search).get('data');
     state.gh = parseGhFromHash();
-    if(state.gh){
-      $('loadMsg').textContent = `Режим GitHub: ${state.gh.repo} @ ${state.gh.branch} → ${state.gh.path}`;
-    } else {
-      $('loadMsg').textContent = `Режим Pages: читаем ./database.json (без кэша)`;
-    }
+    if(state.gh){ $('loadMsg').textContent = `Режим GitHub: ${state.gh.repo} @ ${state.gh.branch} → ${state.gh.path}`; }
+    else { $('loadMsg').textContent = `Режим Pages: читаем ./database.json (без кэша)`; }
     try{
       const baseUrl = param || new URL('database.json', location.href).toString();
       await loadDbFromUrl(baseUrl);
@@ -604,10 +718,13 @@
     }
   })();
 
-  // обновлять подписи при движении/зуме
+  // подписи при движении/зуме
   map.on('moveend zoomend', ()=>{
     state.labels.forEach(m=>map.removeLayer(m)); state.labels=[];
-    state.features.forEach(l=>{ if(map.hasLayer(l)) placeEdgeLabel(l, extractHouse(state.db.items.find(it=>it.id===l._id)?.title)); });
+    state.features.forEach(l=>{
+      const it = state.db.items.find(x=>x.id===Array.from(state.features.entries()).find(([id,lay])=>lay===l)?.[0]);
+      if(it && map.hasLayer(l)) placeEdgeLabel(l, extractHouse(it?.title));
+    });
   });
 })();
 </script>
