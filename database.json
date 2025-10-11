@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2025-10-11T03:33:31.988Z",
+  "updated_at": "2025-10-11T03:34:39.314Z",
   "items": [
     {
       "id": "d2052231-ef31-4ba2-a4d7-0a8db709dc2a",
@@ -9476,7 +9476,7 @@
       "id": "896ff2d4-185f-4981-8baa-bb6108bcf253",
       "title": "г. Саратов, ул. 2 Садовая, 83",
       "city": "Саратов",
-      "polygon": []
+      "polygon": null
     },
     {
       "id": "70fa53ff-2751-41e2-a3c1-74c1b1eeaedb",
