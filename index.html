@@ -165,18 +165,18 @@
   function extractHouse(t){
     const s=String(t||'').trim();
     const m=s.match(/,\s*([^,]+)\s*$/); if(m) return m[1].replace(/^(дом|д\.)\s*/i,'').trim();
-    const m2=s.match(/(\d+[0-9A-Za-zА-Яа-Я\/\-]*?)\s*$/); return m2?m2[1]:s;
+    // ✅ фикс: корректный диапазон русских букв
+    const m2=s.match(/(\d+[0-9A-Za-zА-Яа-яЁё\/\-]*?)\s*$/);
+    return m2?m2[1]:s;
   }
 
   function removeAllLayers(){
-    // убрать ВСЕ полигоны и подписи
     state.features.forEach(l=>{ if(map.hasLayer(l)) map.removeLayer(l); });
     state.labels.forEach(m=>map.removeLayer(m));
     state.labels=[];
   }
 
   function ensureLayer(it){
-    // создать слой, если ещё не создан
     let poly = state.features.get(it.id);
     if(!poly && Array.isArray(it.polygon) && it.polygon.length>=3){
       const ll = ringLonLat_to_LatLng(it.polygon);
@@ -205,9 +205,7 @@
   }
 
   function applyFiltersAndVisibility(){
-    // очистить подписи
     state.labels.forEach(m=>map.removeLayer(m)); state.labels=[];
-    // пройтись по всем элементам — добавить/убрать слои
     state.db.items.forEach(it=>{
       const layer = state.features.get(it.id);
       const passCity = (state.cityFilter.size===0) || state.cityFilter.has((it.city||'').trim().toLowerCase());
@@ -240,7 +238,6 @@
   }
 
   function renderAll(){
-    // не создаём слои массово — только при необходимости
     applyFiltersAndVisibility();
     renderCityChips();
     renderList();
@@ -450,11 +447,9 @@
         const modeHint = div.querySelector('.modeHint');
 
         btnShow.onclick = ()=>{
-          // гарантируем видимость и фокус
           state.visibleIds.add(it.id);
           applyFiltersAndVisibility();
           focusItem(it.id, {expand:false, scroll:true});
-          // прокрутка и чекбокс остаются в актуальном состоянии
           const cb = div.querySelector('.visToggle'); if(cb) cb.checked = true;
         };
 
@@ -466,7 +461,6 @@
           if(state.openItemId===it.id) div.scrollIntoView({block:'center', behavior:'smooth'});
         };
 
-        // 🗑️ Удаление адреса
         btnDel.onclick = async ()=>{
           const name = (it.title || '(без названия)').trim();
           if(!confirm(`Точно удалить адрес:\n\n${name}\n\nДействие необратимо.`)) return;
@@ -586,7 +580,6 @@
 
   function focusItem(id, {expand=true, scroll=true} = {}){
     state.selectedId = id;
-    // включим видимость выбранного
     state.visibleIds.add(id);
     applyFiltersAndVisibility();
 
@@ -698,7 +691,7 @@
     state.db.items.push(it);
     state.visibleIds.add(id);
     state.selectedId = id;
-    state.openItemId = id; // сразу открыть редактор
+    state.openItemId = id;
     renderAll(); scrollToItem(id);
   };
 
@@ -745,10 +738,7 @@
     const r = await fetch(bust, { cache:'no-store', headers:{'Accept':'application/json'} });
     if(!r.ok) throw new Error('HTTP '+r.status);
     state.db = normalizeDb(await r.json());
-
-    // по умолчанию НИЧЕГО не включаем (чтобы не лагало на тысячах)
     state.visibleIds.clear();
-
     renderAll();
   }
 
