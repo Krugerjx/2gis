@@ -22,7 +22,7 @@
     button.primary { background:#111827; color:#fff; border-color:#111827; }
     button.ghost { background:#f8fafc; }
     .list { display:flex; flex-direction:column; gap:6px; }
-    .item { padding:8px 10px; border:1px dashed #ddd; border-radius:10px; display:grid; grid-template-columns:1fr auto; gap:6px; align-items:center; }
+    .item { padding:8px 10px; border:1px dashed #ddd; border-radius:10px; display:grid; grid-template-columns:auto 1fr auto; gap:8px; align-items:center; }
     .item.active { background:#fff6e5; outline: 1px solid #fbbf24; }
     .item .act { display:flex; gap:6px; }
     .hint { font-size:12px; color:#475569; }
@@ -57,6 +57,11 @@
     .sg-item { border:1px dashed #e5e7eb; border-radius:10px; padding:8px; background:#fff; }
     .sg-top { display:flex; justify-content:space-between; gap:8px; align-items:center; }
     .sg-title { font-weight:600; }
+
+    /* Видимость */
+    .vis { display:flex; align-items:center; gap:6px; }
+    .vis input { width:16px; height:16px; }
+    .vis-all { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
   </style>
 </head>
 <body>
@@ -102,10 +107,12 @@
 
     <div class="panel">
       <div class="title" style="margin-bottom:6px;">Вид</div>
-      <div class="row">
-        <button id="btnFit" class="ghost">Показать все</button>
+      <div class="vis-all row">
+        <button id="btnShowAll" class="ghost">Показать все</button>
+        <button id="btnHideAll" class="ghost">Скрыть все</button>
+        <button id="btnFit" class="ghost">Вписать в экран</button>
       </div>
-      <div class="hint" style="margin-top:6px;">Двойной клик по карте выключает рисование.</div>
+      <div class="hint" style="margin-top:6px;">Лейблы домов показываются на зуме ≥ 15. Двойной клик по карте выключает рисование.</div>
     </div>
   </div>
 
@@ -120,6 +127,7 @@
 
   const $ = id => document.getElementById(id);
   const DEFAULT_COLOR = '#7c3aed';
+  const LABEL_ZOOM_MIN = 15;
 
   // --- Состояние
   const state = {
@@ -142,7 +150,10 @@
     // поиск
     searchMode: 'local', // 'local' | 'global'
     searchQuery: '',
-    searchMarker: null
+    searchMarker: null,
+
+    // видимость на карте
+    visibleIds: new Set() // ids, которые отмечены галочкой
   };
 
   // --- Helpers
@@ -154,15 +165,31 @@
   function extractHouse(t){
     const s=String(t||'').trim();
     const m=s.match(/,\s*([^,]+)\s*$/); if(m) return m[1].replace(/^(дом|д\.)\s*/i,'').trim();
-    const m2=s.match(/(\d+[0-9A-Za-zА-Яа-я\/\-]*?)\s*$/); return m2?m2[1]:s;
+    const m2=s.match(/(\d+[0-9A-Za-zА-Яа-Я\/\-]*?)\s*$/); return m2?m2[1]:s;
   }
 
-  function clearMap(){
-    state.features.forEach(l=>map.removeLayer(l));
-    state.features.clear();
-    state.labels.forEach(m=>map.removeLayer(m)); state.labels=[];
+  function removeAllLayers(){
+    // убрать ВСЕ полигоны и подписи
+    state.features.forEach(l=>{ if(map.hasLayer(l)) map.removeLayer(l); });
+    state.labels.forEach(m=>map.removeLayer(m));
+    state.labels=[];
   }
+
+  function ensureLayer(it){
+    // создать слой, если ещё не создан
+    let poly = state.features.get(it.id);
+    if(!poly && Array.isArray(it.polygon) && it.polygon.length>=3){
+      const ll = ringLonLat_to_LatLng(it.polygon);
+      poly = L.polygon(ll, { color:DEFAULT_COLOR, weight:2, fillColor:DEFAULT_COLOR, fillOpacity:.9 });
+      poly._id = it.id;
+      poly.on('click', ()=>onPolygonClick(it.id));
+      state.features.set(it.id, poly);
+    }
+    return poly || null;
+  }
+
   function placeEdgeLabel(layer, text){
+    if(map.getZoom() < LABEL_ZOOM_MIN) return;
     const b=layer.getBounds();
     const pos = map.layerPointToLatLng(map.latLngToLayerPoint(L.latLng(b.getNorth(), (b.getEast()+b.getWest())/2)).add([0,-12]));
     const icon = L.divIcon({ className:'house-label', html:`<span class="hl">${esc(text||'')}</span>` });
@@ -170,19 +197,51 @@
     state.labels.push(mk);
   }
 
-  function drawItem(it){
-    if(!Array.isArray(it.polygon) || it.polygon.length<3) return;
-    const ll = ringLonLat_to_LatLng(it.polygon);
-    const poly = L.polygon(ll, { color:DEFAULT_COLOR, weight:2, fillColor:DEFAULT_COLOR, fillOpacity:.9 }).addTo(map);
-    poly.on('click', ()=>onPolygonClick(it.id));
-    state.features.set(it.id, poly);
-    placeEdgeLabel(poly, extractHouse(it.title));
+  function matchesSearchLocal(it){
+    if(state.searchMode!=='local' || !state.searchQuery) return true;
+    const q = norm(state.searchQuery);
+    const hay = norm(`${it.city} ${it.title}`);
+    return hay.includes(q);
+  }
+
+  function applyFiltersAndVisibility(){
+    // очистить подписи
+    state.labels.forEach(m=>map.removeLayer(m)); state.labels=[];
+    // пройтись по всем элементам — добавить/убрать слои
+    state.db.items.forEach(it=>{
+      const layer = state.features.get(it.id);
+      const passCity = (state.cityFilter.size===0) || state.cityFilter.has((it.city||'').trim().toLowerCase());
+      const passSearch = (state.searchMode!=='local') || matchesSearchLocal(it);
+      const passVisible = state.visibleIds.has(it.id);
+      const pass = passCity && passSearch && passVisible && Array.isArray(it.polygon) && it.polygon.length>=3;
+
+      if(pass){
+        const poly = ensureLayer(it);
+        if(poly && !map.hasLayer(poly)) poly.addTo(map);
+        if(poly) placeEdgeLabel(poly, extractHouse(it.title));
+      } else {
+        if(layer && map.hasLayer(layer)) map.removeLayer(layer);
+      }
+    });
+  }
+
+  function fitVisible(){
+    const b = L.latLngBounds();
+    state.features.forEach(l=>{ if(map.hasLayer(l)) b.extend(l.getBounds()); });
+    if(b.isValid()) map.fitBounds(b.pad(0.15));
+  }
+
+  function highlightLocal(text){
+    if(state.searchMode!=='local' || !state.searchQuery) return esc(text||'');
+    const raw = String(text||'');
+    const s = norm(raw), q = norm(state.searchQuery);
+    const i = s.indexOf(q); if(i<0) return esc(raw);
+    return esc(raw.slice(0,i)) + '<mark>' + esc(raw.slice(i, i + state.searchQuery.length)) + '</mark>' + esc(raw.slice(i + state.searchQuery.length));
   }
 
   function renderAll(){
-    clearMap();
-    state.db.items.forEach(drawItem);
-    applyFiltersOnMap();
+    // не создаём слои массово — только при необходимости
+    applyFiltersAndVisibility();
     renderCityChips();
     renderList();
   }
@@ -204,9 +263,9 @@
     state.searchQuery = v;
     if(state.searchMode==='local'){
       suggestBox.style.display='none';
-      renderList(); applyFiltersOnMap();
+      renderList(); applyFiltersAndVisibility();
     }else{
-      renderList(); applyFiltersOnMap();
+      renderList(); applyFiltersAndVisibility();
       debouncedNominatim(v);
     }
   }
@@ -224,7 +283,6 @@
   });
   searchClear.onclick = ()=>{ searchBox.value=''; setSearch(''); searchBox.focus(); };
 
-  // глобальная горячая клавиша
   window.addEventListener('keydown', (e)=>{
     if((e.ctrlKey || e.metaKey) && e.key.toLowerCase()==='k'){
       e.preventDefault(); searchBox.focus(); searchBox.select();
@@ -295,6 +353,7 @@
     const id = String(crypto?.randomUUID?.() || (Date.now()+Math.random()));
     const it = { id, title: title || sg.display_name, city: city || '', polygon: null };
     state.db.items.push(it);
+    state.visibleIds.add(id); // новый адрес сразу видимый
     state.selectedId = id;
     state.openItemId = id;
 
@@ -308,25 +367,11 @@
   }
 
   // ---------- Список + редактор
-  function matchesSearchLocal(it){
-    if(state.searchMode!=='local' || !state.searchQuery) return true;
-    const q = norm(state.searchQuery);
-    const hay = norm(`${it.city} ${it.title}`);
-    return hay.includes(q);
-  }
-  function highlightLocal(text){
-    if(state.searchMode!=='local' || !state.searchQuery) return esc(text||'');
-    const raw = String(text||'');
-    const s = norm(raw), q = norm(state.searchQuery);
-    const i = s.indexOf(q); if(i<0) return esc(raw);
-    return esc(raw.slice(0,i)) + '<mark>' + esc(raw.slice(i, i + state.searchQuery.length)) + '</mark>' + esc(raw.slice(i + state.searchQuery.length));
-  }
-
   function renderList(){
     const host = $('itemsList'); host.innerHTML='';
     const filtered = state.db.items.filter(it =>
       (state.cityFilter.size===0 || state.cityFilter.has((it.city||'').trim().toLowerCase()))
-      && matchesSearchLocal(it)
+      && ((state.searchMode!=='local') || matchesSearchLocal(it))
     );
 
     $('countLbl').textContent = state.db.items.length;
@@ -340,16 +385,23 @@
         div.className='item' + (state.selectedId===it.id?' active':'');
         div.dataset.id = it.id;
 
+        const checked = state.visibleIds.has(it.id) ? 'checked' : '';
         div.innerHTML = `
-          <div class="title">${highlightLocal(it.title||'(без названия)')}</div>
+          <label class="vis">
+            <input type="checkbox" class="visToggle" ${checked} />
+          </label>
+          <div>
+            <div class="title">${highlightLocal(it.title||'(без названия)')}</div>
+            <div class="muted">
+              ${it.city ? highlightLocal(it.city) : 'Без города'} • ${it.polygon && it.polygon.length>=3 ? 'Контур есть' : 'Контур не задан'}
+            </div>
+          </div>
           <div class="act">
             <button class="ghost" title="Показать">Показать</button>
             <button class="ghost" title="Редактировать">✏️</button>
             <button class="ghost" title="Удалить">🗑️</button>
           </div>
-          <div class="muted" style="grid-column:1 / -1">
-            ${it.city ? highlightLocal(it.city) : 'Без города'} • ${it.polygon && it.polygon.length>=3 ? 'Контур есть' : 'Контур не задан'}
-          </div>
+
           <div class="inline-editor ${state.openItemId===it.id?'open':''}">
             <div class="inline-row">
               <div>
@@ -377,6 +429,13 @@
           </div>
         `;
 
+        const visToggle = div.querySelector('.visToggle');
+        visToggle.onchange = ()=>{
+          if(visToggle.checked) state.visibleIds.add(it.id);
+          else state.visibleIds.delete(it.id);
+          applyFiltersAndVisibility();
+        };
+
         const [btnShow, btnEdit, btnDel] = div.querySelectorAll('.act button');
         const eTitle = div.querySelector('.eTitle');
         const eCity  = div.querySelector('.eCity');
@@ -390,7 +449,15 @@
         const editMsg = div.querySelector('.editMsg');
         const modeHint = div.querySelector('.modeHint');
 
-        btnShow.onclick = ()=>focusItem(it.id, {expand:false, scroll:true});
+        btnShow.onclick = ()=>{
+          // гарантируем видимость и фокус
+          state.visibleIds.add(it.id);
+          applyFiltersAndVisibility();
+          focusItem(it.id, {expand:false, scroll:true});
+          // прокрутка и чекбокс остаются в актуальном состоянии
+          const cb = div.querySelector('.visToggle'); if(cb) cb.checked = true;
+        };
+
         btnEdit.onclick = ()=>{
           if(state.openItemId===it.id){ state.openItemId=null; }
           else { state.openItemId=it.id; state.selectedId=it.id; }
@@ -411,6 +478,7 @@
           const layer = state.features.get(it.id);
           if(layer && map.hasLayer(layer)) map.removeLayer(layer);
           state.features.delete(it.id);
+          state.visibleIds.delete(it.id);
 
           const idx = state.db.items.findIndex(x=>x.id===it.id);
           if(idx!==-1) state.db.items.splice(idx,1);
@@ -463,7 +531,8 @@
           if(!ref) return;
           ref.polygon=null;
           state.db.updated_at=new Date().toISOString();
-          renderAll();
+          applyFiltersAndVisibility();
+          renderList();
           editMsg.textContent='Полигон удалён (локально).';
         };
 
@@ -487,7 +556,8 @@
             editMsg.className='muted ok';
             editMsg.textContent = res;
             state.openItemId = null;
-            renderAll();
+            applyFiltersAndVisibility();
+            renderList();
             state.selectedId = it.id;
             scrollToItem(it.id);
           }catch(err){
@@ -516,33 +586,18 @@
 
   function focusItem(id, {expand=true, scroll=true} = {}){
     state.selectedId = id;
+    // включим видимость выбранного
+    state.visibleIds.add(id);
+    applyFiltersAndVisibility();
+
     const layer = state.features.get(id);
-    if(layer && !map.hasLayer(layer)) layer.addTo(map);
     if(expand) state.openItemId = id;
     renderList();
-    if(layer) map.fitBounds(layer.getBounds().pad(0.3));
+    if(layer && map.hasLayer(layer)) map.fitBounds(layer.getBounds().pad(0.3));
     if(scroll) scrollToItem(id);
   }
 
   function onPolygonClick(id){ focusItem(id, {expand:true, scroll:true}); }
-
-  // фильтры на карте (город + локальный поиск)
-  function applyFiltersOnMap(){
-    state.labels.forEach(m=>map.removeLayer(m)); state.labels=[];
-    state.db.items.forEach(it=>{
-      const layer = state.features.get(it.id);
-      if(!layer) return;
-      const passCity = (state.cityFilter.size===0) || state.cityFilter.has((it.city||'').trim().toLowerCase());
-      const passSearch = (state.searchMode!=='local') || matchesSearchLocal(it);
-      const pass = passCity && passSearch;
-      if(pass){
-        if(!map.hasLayer(layer)) layer.addTo(map);
-        placeEdgeLabel(layer, extractHouse(it.title));
-      } else {
-        if(map.hasLayer(layer)) map.removeLayer(layer);
-      }
-    });
-  }
 
   // --- Чипы городов
   function uniqueCities(){
@@ -558,7 +613,7 @@
     const all = document.createElement('span');
     all.className = 'chip' + (state.cityFilter.size===0 ? ' active':'');
     all.textContent = 'Все';
-    all.onclick = ()=>{ state.cityFilter.clear(); applyFiltersOnMap(); renderList(); renderCityChips(); };
+    all.onclick = ()=>{ state.cityFilter.clear(); applyFiltersAndVisibility(); renderList(); renderCityChips(); };
     host.appendChild(all);
 
     uniqueCities().forEach(city=>{
@@ -568,7 +623,7 @@
       chip.textContent = city;
       chip.onclick = ()=>{
         if(state.cityFilter.has(key)) state.cityFilter.delete(key); else state.cityFilter.add(key);
-        applyFiltersOnMap(); renderList(); renderCityChips();
+        applyFiltersAndVisibility(); renderList(); renderCityChips();
       };
       host.appendChild(chip);
     });
@@ -592,7 +647,7 @@
     }
   }
 
-  // --- Клик по карте
+  // --- Клики по карте
   map.on('click', async (e)=>{
     if(state.drawMode){
       state.drawPoints.push(e.latlng);
@@ -623,16 +678,29 @@
     }
   });
 
+  // --- Кнопки "вид"
+  $('btnShowAll').onclick = ()=>{
+    state.visibleIds = new Set(state.db.items.map(x=>x.id));
+    applyFiltersAndVisibility();
+    renderList();
+  };
+  $('btnHideAll').onclick = ()=>{
+    state.visibleIds.clear();
+    applyFiltersAndVisibility();
+    renderList();
+  };
+  $('btnFit').onclick = ()=>{ fitVisible(); };
+
+  // --- Добавление адреса
   $('btnAdd').onclick = ()=>{
     const id = String(crypto?.randomUUID?.() || (Date.now()+Math.random()));
     const it = { id, title:'Новый адрес', city:'', polygon:null };
     state.db.items.push(it);
+    state.visibleIds.add(id);
     state.selectedId = id;
     state.openItemId = id; // сразу открыть редактор
     renderAll(); scrollToItem(id);
   };
-
-  $('btnFit').onclick = ()=>{ map.fitWorld(); };
 
   // --- Overpass helper (поиск контура здания)
   async function fetchOverpassPolygon({ lon, lat }, radius = 500){
@@ -659,7 +727,7 @@
     return null;
   }
 
-  // --- Загрузка базы
+  // --- Загрузка/сохранение базы
   function normalizeDb(j){
     return {
       version: j.version||1,
@@ -677,10 +745,13 @@
     const r = await fetch(bust, { cache:'no-store', headers:{'Accept':'application/json'} });
     if(!r.ok) throw new Error('HTTP '+r.status);
     state.db = normalizeDb(await r.json());
+
+    // по умолчанию НИЧЕГО не включаем (чтобы не лагало на тысячах)
+    state.visibleIds.clear();
+
     renderAll();
   }
 
-  // --- GitHub API (с ретраем 409)
   function parseGhFromHash(){
     const h = new URLSearchParams(location.hash.slice(1));
     const gh = h.get('gh'); const token = h.get('token');
@@ -748,13 +819,17 @@
   })();
 
   // подписи при движении/зуме
-  map.on('moveend zoomend', ()=>{
+  function refreshLabels(){
     state.labels.forEach(m=>map.removeLayer(m)); state.labels=[];
+    if(map.getZoom() < LABEL_ZOOM_MIN) return;
     state.features.forEach(l=>{
-      const it = state.db.items.find(x=>x.id===Array.from(state.features.entries()).find(([id,lay])=>lay===l)?.[0]);
-      if(it && map.hasLayer(l)) placeEdgeLabel(l, extractHouse(it?.title));
+      if(map.hasLayer(l)){
+        const it = state.db.items.find(x=>x.id===l._id);
+        if(it) placeEdgeLabel(l, extractHouse(it.title));
+      }
     });
-  });
+  }
+  map.on('moveend zoomend', refreshLabels);
 })();
 </script>
 </body>
