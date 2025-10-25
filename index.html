@@ -80,6 +80,12 @@
     .inline-row { display:grid; grid-template-columns: 1fr; gap:8px; }
     .inline-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:6px; }
     .inline-footer { display:flex; align-items:center; gap:8px; margin-top:8px; }
+
+    /* Свернуть базу полностью (и список, и чипы), когда включен режим */
+    .base-collapsed #cityChips,
+    .base-collapsed #itemsList {
+      display: none;
+    }
   </style>
 </head>
 <body>
@@ -180,6 +186,7 @@
 
   <div id="map"></div>
 </div>
+
 <script>
 (function(){
   const DEFAULT_BASE_COLOR = '#7c3aed';
@@ -204,20 +211,20 @@
     searchMarker: null,
     baseVisibleIds: new Set(),
 
-    // Наряды (заполним в части 3)
-    orders: [],
+    // Наряды
+    orders: [], // {id, code, company, color, items:[{id, qty}], created_at}
     orderLayers: new Map(),
-    addrToOrder: new Map(),
+    addrToOrder: new Map(), // addrId -> orderId
     activeOrderId: null,
 
-    // Ручное выделение (часть 3)
+    // Ручное выделение для наряда
     selection: new Set(),
     dragRect: null,
     dragStart: null,
 
     // GitHub
     ghDb: null,     // {repo, branch, path, token} для database.json
-    ghNrd: null     // {repo, branch, path, token} для naryad.json (в части 3)
+    ghNrd: null     // {repo, branch, path, token} для naryad.json
   };
 
   // --- Helpers
@@ -232,8 +239,12 @@
     const m2=s.match(/(\d+[0-9A-Za-zА-Яа-яЁё\/\-]*?)\s*$/); return m2?m2[1]:s;
   }
   function uid(){ return (crypto?.randomUUID?.() || (Date.now().toString(36)+Math.random().toString(36).slice(2,8))); }
+  function makeOrderCode(){
+    const d=new Date(); const y=d.getFullYear(); const m=String(d.getMonth()+1).padStart(2,'0'); const day=String(d.getDate()).padStart(2,'0');
+    return `NRD-${y}${m}${day}-${String(rand(9999)).padStart(4,'0')}`;
+  }
 
-  // --- GitHub utils (save database.json)
+  // --- Парсинг GitHub параметров
   function parseGhFromHashKey(key, fallbackPath){
     const h = new URLSearchParams(location.hash.slice(1));
     const gh = h.get(key); const token = h.get('token');
@@ -265,7 +276,7 @@
     return await r.json();
   }
 
-  // --- Слои базы
+  // --- База: слои
   function ensureBaseLayer(it){
     let poly = state.features.get(it.id);
     if(!poly && Array.isArray(it.polygon) && it.polygon.length>=3){
@@ -304,7 +315,7 @@
       const passSearch = !state.searchQuery || norm(`${it.city} ${it.title}`).includes(norm(state.searchQuery));
       const passVisible = state.baseVisibleIds.has(it.id);
       const passNotCollapsed = !state.baseCollapsed;
-      const passNotInOrders = !state.addrToOrder.has(it.id); // скрываем дома, попавшие в наряды
+      const passNotInOrders = !state.addrToOrder.has(it.id); // чтобы не мешались дома, попавшие в наряды
       const pass = passCity && passSearch && passVisible && passNotCollapsed && passNotInOrders && Array.isArray(it.polygon) && it.polygon.length>=3;
       if(pass){
         const poly = ensureBaseLayer(it);
@@ -320,7 +331,8 @@
     const b=L.latLngBounds();
     // база
     state.features.forEach(l=>{ if(map.hasLayer(l)) b.extend(l.getBounds()); });
-    // (Наряды добавим в части 3)
+    // наряды
+    state.orderLayers.forEach(g=>{ if(map.hasLayer(g)) b.extend(g.getBounds()); });
     if(b.isValid()) map.fitBounds(b.pad(0.15));
   }
 
@@ -387,7 +399,6 @@
           <button class="ghost" title="Редактировать">✏️</button>
           <button class="ghost" title="Удалить">🗑️</button>
         </div>`;
-
       const visToggle = div.querySelector('.visToggle');
       visToggle.onchange = ()=>{ if(visToggle.checked) state.baseVisibleIds.add(it.id); else state.baseVisibleIds.delete(it.id); applyBaseVisibility(); };
       const [btnShow, btnEdit, btnDel] = div.querySelectorAll('.act button');
@@ -403,7 +414,7 @@
     const layer=state.features.get(id); if(layer && map.hasLayer(layer)) map.fitBounds(layer.getBounds().pad(0.3));
     if(scroll){ const el=document.querySelector(`#itemsList .item[data-id="${CSS.escape(id)}"]`); el && el.scrollIntoView({block:'center', behavior:'smooth'}); }
   }
-  function onBasePolygonClick(id){ /* если активен наряд — добавим в него в части 3 */ focusBaseItem(id,{scroll:false}); }
+  function onBasePolygonClick(id){ if(state.activeOrderId){ toggleAddrInActiveOrder(id); } else { focusBaseItem(id,{scroll:false}); } }
 
   // --- Чипы городов
   function uniqueCities(){ const set=new Set(); state.db.items.forEach(it=>{ const c=String(it.city||'').trim(); if(c) set.add(c); }); return Array.from(set).sort((a,b)=>a.localeCompare(b,'ru')); }
@@ -414,7 +425,13 @@
   }
 
   // --- Свернуть/раскрыть базу
-  $('btnToggleBase').onclick = ()=>{ state.baseCollapsed=!state.baseCollapsed; $('btnToggleBase').textContent = state.baseCollapsed? 'Показать адреса базы' : 'Свернуть адреса базы'; applyBaseVisibility(); renderBaseList(); };
+  $('btnToggleBase').onclick = ()=>{
+    state.baseCollapsed = !state.baseCollapsed;
+    document.body.classList.toggle('base-collapsed', state.baseCollapsed);
+    $('btnToggleBase').textContent = state.baseCollapsed ? 'Показать адреса базы' : 'Свернуть адреса базы';
+    applyBaseVisibility();
+    renderBaseList();
+  };
   $('btnAddBase').onclick = ()=>{
     const id = uid(); const it = { id, title:'Новый адрес', city:'', polygon:null };
     state.db.items.push(it); state.baseVisibleIds.add(id); state.selectedBaseId=id; openBaseEditor(id);
@@ -574,42 +591,21 @@
     return null;
   }
 
-  // --- Boot (база)
-  async function loadJsonNoCache(url){ const bust = url + (url.includes('?') ? '&' : '?') + 'v=' + Date.now(); const r = await fetch(bust, { cache:'no-store', headers:{'Accept':'application/json'} }); if(!r.ok) throw new Error('HTTP '+r.status); return await r.json(); }
-  (async function boot(){
-    // GitHub параметры: #ghdb=OWNER/REPO@branch:path/to/database.json&ghnrd=OWNER/REPO@branch:path/to/naryad.json&token=ghp_xxx
-    state.ghDb  = parseGhFromHashKey('ghdb',  'database.json');
-    state.ghNrd = parseGhFromHashKey('ghnrd', 'naryad.json'); // используется в части 3
-    if(state.ghDb){ $('loadMsg').textContent = `GitHub: ${state.ghDb.repo}@${state.ghDb.branch} → ${state.ghDb.path}`; }
-    else { $('loadMsg').textContent = 'Pages: читаем ./database.json (без кэша)'; }
-
-    try{
-      const dbUrl = state.ghDb ? `https://raw.githubusercontent.com/${state.ghDb.repo}/${state.ghDb.branch}/${state.ghDb.path}` : new URL('database.json', location.href).toString();
-      const db = await loadJsonNoCache(dbUrl);
-      state.db = normalizeDb(db);
-      state.baseVisibleIds = new Set(state.db.items.map(x=>x.id));
-      renderCityChips(); renderBaseList(); applyBaseVisibility();
-    }catch(e){
-      $('loadMsg').textContent = 'Ошибка загрузки database.json: '+e.message;
-      console.warn(e);
-    }
-  })();
-
-  async function saveDb(){ const content = JSON.stringify({ ...state.db, updated_at:new Date().toISOString() }, null, 2); if(state.ghDb){ let sha = await ghGetSha(state.ghDb); try{ const res = await ghPut(state.ghDb, content, sha || undefined); return `Коммит ${res.commit?.sha?.slice(0,7)} в ${state.ghDb.repo}/${state.ghDb.branch}`; }catch(e){ if(e?._status===409){ sha = await ghGetSha(state.ghDb); const res = await ghPut(state.ghDb, content, sha || undefined); return `Коммит ${res.commit?.sha?.slice(0,7)} (sha обновлён)`; } throw e; } } const blob = new Blob([content], {type:'application/json;charset=utf-8'}); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'database.json'; a.click(); URL.revokeObjectURL(a.href); throw new Error('Скачан обновлённый database.json — замени его в репозитории.'); }
-
-  // Подписи при движении/зуме
-  map.on('moveend zoomend', addBaseLabelsIfZoom);
-
-  // Экспорт частей для следующего блока (Наряды) — доступ к map/state/helper-функциям
-  window.__APP_CTX__ = { map, state, esc, norm, uid, rand, ringLonLat_to_LatLng, ringLatLng_to_LonLat, extractHouse, addBaseLabelsIfZoom, ensureBaseLayer, applyBaseVisibility, fitAllVisible, parseGhFromHashKey, ghGetSha, ghPut };
-})();
-</script>
   // =========================
   // ===== Н А Р Я Д Ы ======
   // =========================
 
   // Слои и рендер
-  function ensureOrderLayer(order){ let group = state.orderLayers.get(order.id); if(!group){ group=L.featureGroup(); group._orderId=order.id; group.addTo(map); state.orderLayers.set(order.id, group); } return group; }
+  function ensureOrderLayer(order){
+    let group = state.orderLayers.get(order.id);
+    if(!group){
+      group=L.featureGroup();
+      group._orderId=order.id;
+      group.addTo(map);
+      state.orderLayers.set(order.id, group);
+    }
+    return group;
+  }
   function refreshOrderLayer(order){
     const group = ensureOrderLayer(order);
     group.clearLayers();
@@ -625,46 +621,46 @@
     });
   }
   function renderOrdersList(){
-    const host=$('ordersList'); host.innerHTML='';
-    if(!state.orders.length){ host.innerHTML = '<div class="muted">Пока нет нарядов.</div>'; return; }
-    state.orders.slice().sort((a,b)=> (b.created_at||'').localeCompare(a.created_at||'')).forEach(order=>{
-      const total = order.items.reduce((s,x)=> s + (Number(x.qty)||0), 0);
-      const div=document.createElement('div');
-      div.className='item'+(state.activeOrderId===order.id?' active':'');
-      div.dataset.id=order.id;
-      const vis = map.hasLayer(ensureOrderLayer(order)) ? 'checked' : '';
-      div.innerHTML = `
-        <label class="vis"><input type="checkbox" class="visOrder" ${vis} /></label>
-        <div>
-          <div class="title">${esc(order.company)} • <span style="color:${order.color}">●</span> ${order.code}</div>
-          <div class="muted">Адресов: ${order.items.length} • Кол всего: ${total}</div>
-        </div>
-        <div class="act">
-          <button class="ghost btnEdit">Редактировать</button>
-          <button class="ghost btnFit">Показать</button>
-          <button class="danger btnDel">Удалить</button>
-        </div>`;
-      div.querySelector('.visOrder').onchange = (e)=>{ const g=ensureOrderLayer(order); if(e.target.checked){ g.addTo(map); } else { map.removeLayer(g); } };
-      div.querySelector('.btnFit').onclick = ()=>{ const g=ensureOrderLayer(order); if(g && g.getBounds && g.getLayers().length){ map.fitBounds(g.getBounds().pad(0.2)); } addBaseLabelsIfZoom(); };
-      div.querySelector('.btnEdit').onclick = ()=> openOrderEditor(order.id);
-      div.querySelector('.btnDel').onclick = ()=> deleteOrder(order.id);
-      host.appendChild(div);
-    });
+    const host=$('ordersList');
+    host.innerHTML='';
+    if(!state.orders.length){
+      host.innerHTML = '<div class="muted">Пока нет нарядов.</div>';
+      return;
+    }
+    state.orders
+      .slice()
+      .sort((a,b)=> (b.created_at||'').localeCompare(a.created_at||''))
+      .forEach(order=>{
+        const total = order.items.reduce((s,x)=> s + (Number(x.qty)||0), 0);
+        const div=document.createElement('div');
+        div.className='item'+(state.activeOrderId===order.id?' active':'');
+        div.dataset.id=order.id;
+        const vis = map.hasLayer(ensureOrderLayer(order)) ? 'checked' : '';
+        div.innerHTML = `
+          <label class="vis"><input type="checkbox" class="visOrder" ${vis} /></label>
+          <div>
+            <div class="title">${esc(order.company)} • <span style="color:${order.color}">●</span> ${order.code}</div>
+            <div class="muted">Адресов: ${order.items.length} • Кол всего: ${total}</div>
+          </div>
+          <div class="act">
+            <button class="ghost btnEdit">Редактировать</button>
+            <button class="ghost btnFit">Показать</button>
+            <button class="danger btnDel">Удалить</button>
+          </div>
+        `;
+        div.querySelector('.visOrder').onchange = (e)=>{ const g=ensureOrderLayer(order); if(e.target.checked){ g.addTo(map); } else { map.removeLayer(g); } };
+        div.querySelector('.btnFit').onclick = ()=>{ const g=ensureOrderLayer(order); if(g && g.getBounds && g.getLayers().length){ map.fitBounds(g.getBounds().pad(0.2)); } addBaseLabelsIfZoom(); };
+        div.querySelector('.btnEdit').onclick = ()=> openOrderEditor(order.id);
+        div.querySelector('.btnDel').onclick = ()=> deleteOrder(order.id);
+        host.appendChild(div);
+      });
   }
 
-  // Создание из XLSX/CSV (кнопки загрузки уже в разметке)
-  const fileInput=$('fileInput'), btnClearUpload=$('btnClearUpload'), uploadStats=$('uploadStats'),
-        matchTableWrap=$('matchTableWrap'), matchTable=$('matchTable'),
-        companyInput=$('companyInput'), colorInput=$('colorInput'), btnCreateOrder=$('btnCreateOrder');
-
+  // Создание из XLSX/CSV
+  const fileInput=$('fileInput'), btnClearUpload=$('btnClearUpload'), uploadStats=$('uploadStats'), matchTableWrap=$('matchTableWrap'), matchTable=$('matchTable'), companyInput=$('companyInput'), colorInput=$('colorInput'), btnCreateOrder=$('btnCreateOrder');
   let uploadRows=[]; // [{address, qty, foundId|null}]
-
   fileInput.addEventListener('change', handleFile);
-  btnClearUpload.onclick = ()=>{
-    fileInput.value=''; uploadRows=[]; uploadStats.textContent='';
-    matchTableWrap.style.display='none'; matchTable.innerHTML='';
-  };
-
+  btnClearUpload.onclick = ()=>{ fileInput.value=''; uploadRows=[]; uploadStats.textContent=''; matchTableWrap.style.display='none'; matchTable.innerHTML=''; };
   async function handleFile(){
     const file = fileInput.files?.[0]; if(!file) return;
     const buf = await file.arrayBuffer(); let rows = [];
@@ -676,22 +672,21 @@
       const ws = wb.Sheets[wb.SheetNames[0]];
       rows = XLSX.utils.sheet_to_json(ws, {defval:''});
     }
-    const mapped = rows.map(r=>({
-      address: String(r['Адрес'] ?? r['адрес'] ?? r['Address'] ?? '').trim(),
-      qty: Number(r['Кол'] ?? r['кол'] ?? r['Количество'] ?? 0) || 0
-    })).filter(x=>x.address);
-
+    const mapped = rows.map(r=>({ address: String(r['Адрес'] ?? r['адрес'] ?? r['Address'] ?? '').trim(), qty: Number(r['Кол'] ?? r['кол'] ?? r['Количество'] ?? 0) || 0 })).filter(x=>x.address);
     const baseByTitle = new Map(state.db.items.map(it=> [norm(it.title), it.id] ));
     uploadRows = mapped.map(r=>({ address:r.address, qty:r.qty, foundId: baseByTitle.get(norm(r.address)) || null }));
-
-    const hits = uploadRows.filter(x=>x.foundId);
-    const miss = uploadRows.filter(x=>!x.foundId);
+    const hits = uploadRows.filter(x=>x.foundId); const miss = uploadRows.filter(x=>!x.foundId);
     uploadStats.innerHTML = `Всего строк: <b>${uploadRows.length}</b> • найдены в базе: <b>${hits.length}</b> • не найдены: <b>${miss.length}</b>`;
     renderMatchTable();
   }
   function parseCSV(txt){
     const sep = txt.includes(';') && !txt.includes(',') ? ';' : ',';
-    const lines = txt.split(/\r?\n/).filter(Boolean);
+    const lines = txt split(/\r?\n/).filter(Boolean); // <- исправляем далее
+  }
+  // fix parseCSV (правильная реализация)
+  function parseCSV(txtFixed){
+    const sep = txtFixed.includes(';') && !txtFixed.includes(',') ? ';' : ',';
+    const lines = txtFixed.split(/\r?\n/).filter(Boolean);
     const header = lines[0].split(sep).map(s=>s.trim());
     const idxA = header.findIndex(h=> /^(Адрес|Address)$/i.test(h));
     const idxQ = header.findIndex(h=> /^(Кол|Количество)$/i.test(h));
@@ -702,6 +697,7 @@
     }
     return arr;
   }
+
   function renderMatchTable(){
     matchTableWrap.style.display='';
     matchTable.innerHTML = '';
@@ -724,24 +720,20 @@
     if(!hits.length) return alert('Нет найденных адресов, добавить нечего.');
     const company = companyInput.value.trim() || 'Без названия';
     const color = colorInput.value || '#e11d48';
-
     const items=[]; const skipped=[];
     hits.forEach(h=>{
       if(state.addrToOrder.has(h.foundId)) skipped.push(h.address);
       else items.push({id:h.foundId, qty: Number(h.qty)||0});
     });
     if(!items.length) return alert('Все адреса из файла уже есть в других нарядах.');
-
     const order={ id: uid(), code: makeOrderCode(), company, color, items, created_at: new Date().toISOString() };
     state.orders.push(order);
     items.forEach(it=> state.addrToOrder.set(it.id, order.id));
     refreshOrderLayer(order);
     renderOrdersList();
-
     // скрываем их из слоя базы, чтобы не мешали
     items.forEach(it=> state.baseVisibleIds.delete(it.id));
     applyBaseVisibility();
-
     openOrderEditor(order.id);
     if(skipped.length) alert('Пропущены адреса, уже в других нарядах:\n\n'+skipped.join('\n'));
     saveNaryads(true).catch(()=>{});
@@ -752,7 +744,6 @@
     state.activeOrderId = orderId;
     const order = state.orders.find(x=>x.id===orderId); if(!order) return;
     const host = $('orderEditPanel'); host.style.display=''; host.innerHTML = '';
-
     const div=document.createElement('div');
     div.innerHTML = `
       <div class="title" style="margin-bottom:6px;">Редактирование: ${esc(order.company)} • <span style="color:${order.color}">●</span> ${order.code}</div>
@@ -772,17 +763,11 @@
         <table id="orderTable"></table>
       </div>`;
     host.appendChild(div);
-
-    div.querySelector('#eSave').onclick = ()=>{
-      order.company = div.querySelector('#eCompany').value.trim()||'Без названия';
-      order.color = div.querySelector('#eColor').value||order.color;
-      refreshOrderLayer(order); renderOrdersList(); saveNaryads(true).catch(()=>{});
-    };
+    div.querySelector('#eSave').onclick = ()=>{ order.company = div.querySelector('#eCompany').value.trim()||'Без названия'; order.color = div.querySelector('#eColor').value||order.color; refreshOrderLayer(order); renderOrdersList(); saveNaryads(true).catch(()=>{}); };
     div.querySelector('#eClose').onclick = ()=>{ state.activeOrderId=null; host.style.display='none'; };
     div.querySelector('#eSelectAllInView').onclick = ()=> selectAllBaseInViewIntoOrder(order);
     div.querySelector('#eClearSelection').onclick = ()=>{ state.selection.clear(); };
     div.querySelector('#eExportXlsx').onclick = ()=> exportOrderXlsx(order);
-
     renderOrderTable(order);
     ensureOrderLayer(order).addTo(map);
     const g=ensureOrderLayer(order); if(g.getLayers().length) map.fitBounds(g.getBounds().pad(0.2));
@@ -793,22 +778,17 @@
     const thead=document.createElement('thead');
     thead.innerHTML='<tr><th>#</th><th>Адрес</th><th>Кол</th><th></th></tr>';
     t.appendChild(thead);
-
     const tbody=document.createElement('tbody');
     order.items.forEach((it,i)=>{
       const base=state.db.items.find(x=>x.id===it.id); if(!base) return;
       const tr=document.createElement('tr');
-      tr.innerHTML=`<td>${i+1}</td>
+      tr.innerHTML=`
+        <td>${i+1}</td>
         <td>${esc(base.title)}</td>
         <td><input type="number" class="qty" min="0" value="${Number(it.qty)||0}" style="width:80px"></td>
         <td><button class="ghost btnRemove">Убрать</button></td>`;
-      tr.querySelector('.qty').onchange = (e)=>{
-        it.qty = Number(e.target.value)||0;
-        refreshOrderLayer(order); renderOrdersList(); saveNaryads(true).catch(()=>{});
-      };
-      tr.querySelector('.btnRemove').onclick = ()=>{
-        removeAddrFromOrder(order.id, it.id); saveNaryads(true).catch(()=>{});
-      };
+      tr.querySelector('.qty').onchange = (e)=>{ it.qty = Number(e.target.value)||0; refreshOrderLayer(order); renderOrdersList(); saveNaryads(true).catch(()=>{}); };
+      tr.querySelector('.btnRemove').onclick = ()=>{ removeAddrFromOrder(order.id, it.id); saveNaryads(true).catch(()=>{}); };
       tbody.appendChild(tr);
     });
     t.appendChild(tbody);
@@ -816,7 +796,9 @@
 
   function toggleAddrInActiveOrder(addrId){
     const order = state.orders.find(x=>x.id===state.activeOrderId); if(!order) return;
-    if(state.addrToOrder.has(addrId) && state.addrToOrder.get(addrId)!==order.id){ return alert('Адрес уже в другом наряде.'); }
+    if(state.addrToOrder.has(addrId) && state.addrToOrder.get(addrId)!==order.id){
+      return alert('Адрес уже в другом наряде.');
+    }
     const idx = order.items.findIndex(x=>x.id===addrId);
     if(idx===-1){
       order.items.push({id:addrId, qty:0});
@@ -827,17 +809,23 @@
       state.addrToOrder.delete(addrId);
       state.baseVisibleIds.add(addrId);
     }
-    refreshOrderLayer(order); renderOrdersList(); renderOrderTable(order); applyBaseVisibility(); saveNaryads(true).catch(()=>{});
+    refreshOrderLayer(order);
+    renderOrdersList();
+    renderOrderTable(order);
+    applyBaseVisibility();
+    saveNaryads(true).catch(()=>{});
   }
-
   function removeAddrFromOrder(orderId, addrId){
     const order=state.orders.find(x=>x.id===orderId); if(!order) return;
     const idx=order.items.findIndex(x=>x.id===addrId);
     if(idx!==-1){ order.items.splice(idx,1); }
-    state.addrToOrder.delete(addrId); state.baseVisibleIds.add(addrId);
-    refreshOrderLayer(order); renderOrdersList(); renderOrderTable(order); applyBaseVisibility();
+    state.addrToOrder.delete(addrId);
+    state.baseVisibleIds.add(addrId);
+    refreshOrderLayer(order);
+    renderOrdersList();
+    renderOrderTable(order);
+    applyBaseVisibility();
   }
-
   function selectAllBaseInViewIntoOrder(order){
     const inView=[];
     state.db.items.forEach(it=>{
@@ -852,7 +840,11 @@
         state.baseVisibleIds.delete(id);
       }
     });
-    refreshOrderLayer(order); renderOrdersList(); renderOrderTable(order); applyBaseVisibility(); saveNaryads(true).catch(()=>{});
+    refreshOrderLayer(order);
+    renderOrdersList();
+    renderOrderTable(order);
+    applyBaseVisibility();
+    saveNaryads(true).catch(()=>{});
   }
 
   // Создание пустого наряда вручную
@@ -864,19 +856,17 @@
     openOrderEditor(order.id);
     saveNaryads(true).catch(()=>{});
   };
-
   function deleteOrder(orderId){
     const order=state.orders.find(x=>x.id===orderId); if(!order) return;
     if(!confirm(`Удалить наряд ${order.code} (${order.company})?`)) return;
-    order.items.forEach(it=>{
-      state.addrToOrder.delete(it.id);
-      state.baseVisibleIds.add(it.id);
-    });
+    order.items.forEach(it=>{ state.addrToOrder.delete(it.id); state.baseVisibleIds.add(it.id); });
     const g=state.orderLayers.get(orderId); if(g) map.removeLayer(g);
     state.orderLayers.delete(orderId);
     state.orders = state.orders.filter(x=>x.id!==orderId);
     if(state.activeOrderId===orderId){ state.activeOrderId=null; $('orderEditPanel').style.display='none'; }
-    renderOrdersList(); applyBaseVisibility(); saveNaryads(true).catch(()=>{});
+    renderOrdersList();
+    applyBaseVisibility();
+    saveNaryads(true).catch(()=>{});
   }
 
   // Печать + экспорт XLSX
@@ -889,7 +879,14 @@
       const base=state.db.items.find(x=>x.id===it.id);
       return { 'Компания': order.company, 'Цвет': order.color, 'Адрес': base? base.title : it.id, 'Кол': Number(it.qty)||0, 'Код карты': order.code, 'Код наряда': order.code };
     });
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Печать ${esc(order.code)}</title><style>body{font-family:system-ui,Segoe UI,Roboto,Arial;padding:16px;}h1{margin:0 0 12px;}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ddd;padding:6px 8px;text-align:left;font-size:12px}</style></head><body><h1>Наряд ${esc(order.code)} — ${esc(order.company)} <span style="color:${order.color}">●</span></h1><p>Дата: ${new Date(order.created_at).toLocaleString()}</p><table><thead><tr><th>#</th><th>Компания</th><th>Цвет</th><th>Адрес</th><th>Кол</th><th>Код наряда</th></tr></thead><tbody>${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${esc(r['Компания'])}</td><td><span style=\"color:${r['Цвет']}\">●</span> ${esc(r['Цвет'])}</td><td>${esc(r['Адрес'])}</td><td>${r['Кол']}</td><td>${esc(r['Код наряда'])}</td></tr>`).join('')}</tbody></table><script>window.onload=()=>window.print();<\/script></body></html>`;
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Печать ${esc(order.code)}</title>
+    <style>body{font-family:system-ui,Segoe UI,Roboto,Arial;padding:16px;}h1{margin:0 0 12px;}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ddd;padding:6px 8px;text-align:left;font-size:12px}</style></head>
+    <body><h1>Наряд ${esc(order.code)} — ${esc(order.company)} <span style="color:${order.color}">●</span></h1>
+    <p>Дата: ${new Date(order.created_at).toLocaleString()}</p>
+    <table><thead><tr><th>#</th><th>Компания</th><th>Цвет</th><th>Адрес</th><th>Кол</th><th>Код наряда</th></tr></thead>
+    <tbody>
+    ${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${esc(r['Компания'])}</td><td><span style="color:${r['Цвет']}">●</span> ${esc(r['Цвет'])}</td><td>${esc(r['Адрес'])}</td><td>${r['Кол']}</td><td>${esc(r['Код наряда'])}</td></tr>`).join('')}
+    </tbody></table><script>window.onload=()=>window.print();<\/script></body></html>`;
     const w=window.open('about:blank','_blank'); w.document.write(html); w.document.close();
   };
   function exportOrderXlsx(order){
@@ -898,8 +895,10 @@
       return { 'Адрес': base? base.title : it.id, 'Компания': order.company, 'Цвет': order.color, 'Кол': Number(it.qty)||0, 'Код карты': order.code, 'Код наряда': order.code };
     });
     const ws = XLSX.utils.json_to_sheet(data, { header:['Компания','Цвет','Адрес','Кол','Код карты','Код наряда'] });
-    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Наряд');
-    const fn = `naryad_${order.code}.xlsx`; XLSX.writeFile(wb, fn);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Наряд');
+    const fn = `naryad_${order.code}.xlsx`;
+    XLSX.writeFile(wb, fn);
   }
 
   // --- Сохранение/загрузка naryad.json
@@ -917,9 +916,11 @@
     state.orders = Array.isArray(obj.orders)? obj.orders : [];
     state.addrToOrder.clear();
     state.orders.forEach(o=> o.items.forEach(it=> state.addrToOrder.set(it.id, o.id)) );
-    state.orderLayers.forEach(g=> map.removeLayer(g)); state.orderLayers.clear();
+    state.orderLayers.forEach(g=> map.removeLayer(g));
+    state.orderLayers.clear();
     state.orders.forEach(o=> refreshOrderLayer(o));
-    renderOrdersList(); applyBaseVisibility();
+    renderOrdersList();
+    applyBaseVisibility();
     localStorage.setItem('naryad.json', JSON.stringify(getNaryadsObject()));
   }
   async function saveNaryads(silent=false){
@@ -946,6 +947,11 @@
     if(!silent) alert('Скачан naryad.json — замени его в репозитории.');
   }
 
+  // --- Кнопки «Вид»
+  $('btnShowAll').onclick = ()=>{ state.baseVisibleIds = new Set(state.db.items.map(x=>x.id)); applyBaseVisibility(); renderBaseList(); };
+  $('btnHideAll').onclick = ()=>{ state.baseVisibleIds.clear(); applyBaseVisibility(); renderBaseList(); };
+  $('btnFit').onclick = ()=> fitAllVisible();
+
   // --- Прямоугольное выделение (Shift + drag) для наряда
   map.getContainer().addEventListener('mousedown',(e)=>{
     if(!state.activeOrderId) return;
@@ -956,7 +962,8 @@
   });
   map.getContainer().addEventListener('mousemove',(e)=>{
     if(!state.dragRect||!state.dragStart) return;
-    const cur = map.mouseEventToLatLng(e); state.dragRect.setBounds(L.latLngBounds(state.dragStart, cur));
+    const cur = map.mouseEventToLatLng(e);
+    state.dragRect.setBounds(L.latLngBounds(state.dragStart, cur));
   });
   map.getContainer().addEventListener('mouseup',()=>{
     if(!state.dragRect) return;
@@ -975,3 +982,70 @@
     });
     refreshOrderLayer(order); renderOrdersList(); renderOrderTable(order); applyBaseVisibility(); saveNaryads(true).catch(()=>{});
   });
+
+  // --- Загрузка/сохранение базы
+  function normalizeNaryad(j){ return { version: j.version||1, updated_at: j.updated_at || new Date().toISOString(), orders: Array.isArray(j.orders)? j.orders : [] }; }
+  async function loadJsonNoCache(url){ const bust = url + (url.includes('?') ? '&' : '?') + 'v=' + Date.now(); const r = await fetch(bust, { cache:'no-store', headers:{'Accept':'application/json'} }); if(!r.ok) throw new Error('HTTP '+r.status); return await r.json(); }
+
+  // --- Boot
+  (async function boot(){
+    // GitHub параметры: #ghdb=OWNER/REPO@branch:path/to/database.json&ghnrd=OWNER/REPO@branch:path/to/naryad.json&token=ghp_xxx
+    state.ghDb  = parseGhFromHashKey('ghdb',  'database.json');
+    state.ghNrd = parseGhFromHashKey('ghnrd', 'naryad.json');
+    if(!state.ghNrd && state.ghDb){ // если для нарядов не указали — используем ту же репу/ветку, но путь naryad.json рядом
+      const basePath = state.ghDb.path.split('/'); basePath[basePath.length-1] = 'naryad.json';
+      state.ghNrd = { ...state.ghDb, path: basePath.join('/') };
+    }
+
+    // Сообщение о режиме
+    if(state.ghDb){ $('loadMsg').textContent = `GitHub: ${state.ghDb.repo}@${state.ghDb.branch} → ${state.ghDb.path} | Наряды: ${state.ghNrd? state.ghNrd.path : 'локально'}`; }
+    else { $('loadMsg').textContent = 'Pages: читаем ./database.json и ./naryad.json (если есть).'; }
+
+    try{
+      const dbUrl  = state.ghDb  ? `https://raw.githubusercontent.com/${state.ghDb.repo}/${state.ghDb.branch}/${state.ghDb.path}` : new URL('database.json', location.href).toString();
+      const nrdUrl = state.ghNrd ? `https://raw.githubusercontent.com/${state.ghNrd.repo}/${state.ghNrd.branch}/${state.ghNrd.path}` : new URL('naryad.json', location.href).toString();
+      const [db, nrd] = await Promise.all([
+        loadJsonNoCache(dbUrl).catch(e=>{ throw new Error('database.json: '+e.message); }),
+        loadJsonNoCache(nrdUrl).catch(_=> ({orders: []}))
+      ]);
+      state.db = normalizeDb(db); state.baseVisibleIds = new Set(state.db.items.map(x=>x.id));
+      const N = normalizeNaryad(nrd); state.orders = N.orders; state.addrToOrder.clear(); state.orders.forEach(o=> o.items.forEach(it=> state.addrToOrder.set(it.id, o.id)) ); state.orders.forEach(o=> refreshOrderLayer(o));
+      renderCityChips(); renderBaseList(); applyBaseVisibility(); renderOrdersList();
+      // Автосейв в LocalStorage как страховка
+      localStorage.setItem('naryad.json', JSON.stringify(getNaryadsObject()));
+    }catch(e){ $('loadMsg').textContent = 'Ошибка загрузки: '+e.message; console.warn(e); }
+  })();
+
+  async function saveDb(){
+    const content = JSON.stringify({ ...state.db, updated_at:new Date().toISOString() }, null, 2);
+    if(state.ghDb){
+      let sha = await ghGetSha(state.ghDb);
+      try{
+        const res = await ghPut(state.ghDb, content, sha || undefined);
+        return `Коммит ${res.commit?.sha?.slice(0,7)} в ${state.ghDb.repo}/${state.ghDb.branch}`;
+      }catch(e){
+        if(e?._status===409){
+          sha = await ghGetSha(state.ghDb);
+          const res = await ghPut(state.ghDb, content, sha || undefined);
+          return `Коммит ${res.commit?.sha?.slice(0,7)} (sha обновлён)`;
+        }
+        throw e;
+      }
+    }
+    const blob = new Blob([content], {type:'application/json;charset=utf-8'});
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'database.json'; a.click(); URL.revokeObjectURL(a.href);
+    throw new Error('Скачан обновлённый database.json — замени его в репозитории.');
+  }
+
+  // Подписи при движении/зуме
+  map.on('moveend zoomend', addBaseLabelsIfZoom);
+
+  // Переключатель вкладок поиска (локально/OSM)
+  const tabLocal = $('tabLocal');
+  const tabGlobal = $('tabGlobal');
+  tabLocal.onclick = ()=>{ state.searchMode='local'; tabLocal.classList.add('active'); tabGlobal.classList.remove('active'); $('suggestBox').style.display='none'; setSearch($('searchBox').value); };
+  tabGlobal.onclick = ()=>{ state.searchMode='global'; tabGlobal.classList.add('active'); tabLocal.classList.remove('active'); setSearch($('searchBox').value); };
+})();
+</script>
+</body>
+</html>
