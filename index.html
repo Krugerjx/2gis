@@ -823,17 +823,87 @@
       .trim();
   }
 
-  function collectHeaders(rows){
-    const map = new Map();
-    rows.forEach(row=>{
-      Object.keys(row||{}).forEach(key=>{
-        if(key==null) return;
-        const trimmed = String(key).replace(/^[\uFEFF\ufeff]/,'').trim();
-        if(!trimmed || map.has(trimmed)) return;
-        map.set(trimmed, { original: trimmed, norm: normalizeHeaderKey(trimmed) });
-      });
+  function collectHeaders(headerRow){
+    const seen = new Set();
+    const headers = [];
+    headerRow.forEach(cell=>{
+      const original = String(cell ?? '').replace(/[\uFEFF\ufeff]/g,'').trim();
+      if(!original || /^__empty/i.test(original) || seen.has(original)) return;
+      seen.add(original);
+      headers.push({ original, norm: normalizeHeaderKey(original) });
     });
-    return Array.from(map.values());
+    return headers;
+  }
+
+  function matchesAlias(norm, aliases){
+    if(!norm) return false;
+    for(const alias of aliases){
+      if(norm === alias) return true;
+    }
+    for(const alias of aliases){
+      if(alias.length <= 1) continue;
+      if(norm.includes(alias)) return true;
+    }
+    return false;
+  }
+
+  function detectHeaderRow(table){
+    let bestIdx = -1;
+    let bestScore = 0;
+    const limit = Math.min(table.length, 40);
+    for(let i=0;i<limit;i++){
+      const row = Array.isArray(table[i]) ? table[i] : [];
+      const cleaned = row.map(cell=> String(cell ?? '').replace(/[\uFEFF\ufeff]/g,'').trim());
+      if(!cleaned.some(Boolean)) continue;
+      const normalized = cleaned.map(normalizeHeaderKey);
+      let score = 0;
+      const has = { address:false, city:false, street:false, house:false, qty:false };
+      normalized.forEach(n=>{
+        if(matchesAlias(n, HEADER_ALIASES.address)){ score += 6; has.address = true; }
+        if(matchesAlias(n, HEADER_ALIASES.city)){ score += 3; has.city = true; }
+        if(matchesAlias(n, HEADER_ALIASES.street)){ score += 3; has.street = true; }
+        if(matchesAlias(n, HEADER_ALIASES.house)){ score += 2; has.house = true; }
+        if(matchesAlias(n, HEADER_ALIASES.qty)){ score += 2; has.qty = true; }
+      });
+      if(has.address && (has.city || has.street || has.house)) score += 2;
+      if(has.city && has.street && has.house) score += 2;
+      if(score > bestScore){
+        bestScore = score;
+        bestIdx = i;
+      }
+    }
+    if(bestIdx === -1 || bestScore < 2) return null;
+    const cols = Math.max(
+      Array.isArray(table[bestIdx]) ? table[bestIdx].length : 0,
+      ...table.slice(bestIdx + 1).map(row => Array.isArray(row) ? row.length : 0)
+    );
+    const headerRow = Array.from({length:cols}, (_,i)=>{
+      const cell = Array.isArray(table[bestIdx]) ? table[bestIdx][i] : '';
+      return typeof cell === 'string' ? cell.trim() : (cell ?? '');
+    });
+    const dataRows = table.slice(bestIdx + 1).map(row=>{
+      const arr = [];
+      for(let i=0;i<cols;i++){
+        arr[i] = Array.isArray(row) && i < row.length ? row[i] : '';
+      }
+      return arr;
+    });
+    return { headerRow, dataRows };
+  }
+
+  function rowsToObjects(headerRow, dataRows){
+    const keys = headerRow.map(cell=> String(cell ?? '').replace(/[\uFEFF\ufeff]/g,'').trim());
+    return dataRows
+      .map(row=>{
+        const arr = Array.isArray(row) ? row : [];
+        const obj={};
+        keys.forEach((key, idx)=>{
+          if(!key || /^__empty/i.test(key)) return;
+          obj[key] = arr[idx];
+        });
+        return obj;
+      })
+      .filter(obj=> Object.values(obj).some(v=> String(v ?? '').trim()));
   }
 
   function findHeader(headers, aliases){
@@ -906,27 +976,40 @@
 
   async function handleFile(){
     const file = fileInput.files?.[0]; if(!file) return;
-    const buf = await file.arrayBuffer(); let rows = [];
+    const buf = await file.arrayBuffer();
+    let table = [];
     if(/\.csv$/i.test(file.name)){
       const txt = new TextDecoder('utf-8').decode(new Uint8Array(buf));
-      rows = parseCSV(txt);
+      const commaCount = (txt.match(/,/g) || []).length;
+      const semiCount = (txt.match(/;/g) || []).length;
+      const tabCount = (txt.match(/\t/g) || []).length;
+      let fs = ',';
+      if(tabCount && tabCount >= commaCount && tabCount >= semiCount){
+        fs = '\t';
+      } else if(semiCount > commaCount){
+        fs = ';';
+      }
+      const wb = XLSX.read(txt, {type:'string', FS: fs});
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      table = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
     } else {
       const wb = XLSX.read(buf, {type:'array'});
       const ws = wb.Sheets[wb.SheetNames[0]];
-      rows = XLSX.utils.sheet_to_json(ws, {defval:''});
+      table = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
     }
-    rows = rows.map(row=>{
-      const normalized={};
-      Object.entries(row||{}).forEach(([key,val])=>{
-        if(key==null) return;
-        const trimmed = String(key).replace(/^[\uFEFF\ufeff]/,'').trim();
-        if(!trimmed) return;
-        normalized[trimmed] = val;
-      });
-      return normalized;
-    });
 
-    const headers = collectHeaders(rows);
+    table = table.filter(row=> Array.isArray(row) ? row.some(cell=> String(cell ?? '').trim()) : false);
+    const headerInfo = detectHeaderRow(table);
+    if(!headerInfo){
+      uploadRows=[];
+      uploadStats.innerHTML = 'Не удалось определить строку заголовков в файле.';
+      matchTableWrap.style.display='none';
+      matchTable.innerHTML='';
+      return;
+    }
+
+    const headers = collectHeaders(headerInfo.headerRow);
+    const rows = rowsToObjects(headerInfo.headerRow, headerInfo.dataRows);
     const addressKey = findHeader(headers, HEADER_ALIASES.address);
     const cityKey = findHeader(headers, HEADER_ALIASES.city);
     const streetKey = findHeader(headers, HEADER_ALIASES.street);
@@ -971,27 +1054,6 @@
     if(qtyMissing) stats += ' • <span class="dangerText">Колонка количества не найдена, все значения = 0</span>';
     uploadStats.innerHTML = stats;
     renderMatchTable();
-  }
-
-  function parseCSV(txt){
-    const sep = txt.includes(';') && !txt.includes(',') ? ';' : ',';
-    const lines = txt.split(/\r?\n/);
-    if(!lines.length) return [];
-    const headerLine = lines.shift();
-    if(!headerLine) return [];
-    const header = headerLine.replace(/^[\uFEFF\ufeff]/,'').split(sep).map(s=>s.replace(/^"|"$/g,'').trim());
-    const arr = [];
-    lines.forEach(line=>{
-      if(!line.trim()) return;
-      const cells = line.split(sep).map(s=>s.replace(/^"|"$/g,'').trim());
-      const obj={};
-      header.forEach((h,idx)=>{
-        if(!h) return;
-        obj[h] = cells[idx] ?? '';
-      });
-      arr.push(obj);
-    });
-    return arr;
   }
 
   function renderMatchTable(){
