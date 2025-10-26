@@ -89,28 +89,6 @@
 <div id="app">
   <div id="sidebar">
 
-    <!-- ⚙️ Управление базой и видом -->
-    <div class="panel" id="baseControlsPanel">
-      <div class="label" style="margin-bottom:6px;">Управление базой</div>
-      <div class="row base-bar" style="align-items:flex-start;">
-        <button id="btnBasePanelToggle" class="ghost">Свернуть список</button>
-        <button id="btnBaseShow" class="ghost">Показать адреса на карте</button>
-        <button id="btnBaseHide" class="ghost">Скрыть адреса на карте</button>
-        <div id="quickCityFilters" class="chips" style="margin:0;">
-          <span class="chip" data-city="саратов">Саратов</span>
-          <span class="chip" data-city="энгельс">Энгельс</span>
-        </div>
-      </div>
-      <div class="label" style="margin:12px 0 6px;">Вид</div>
-      <div class="row view-bar">
-        <button id="btnShowAll" class="ghost">Показать всё</button>
-        <button id="btnHideAll" class="ghost">Скрыть всё</button>
-        <button id="btnFit" class="ghost">Вписать в экран</button>
-        <button id="btnPrint" class="ghost">Распечатать</button>
-      </div>
-      <div class="hint" style="margin-top:6px;">Лейблы домов показываются на зуме ≥ 15. В ручном режиме: Shift+тащить — прямоугольное выделение.</div>
-    </div>
-
     <!-- 🔎 Поиск -->
     <div class="panel">
       <div class="title" style="margin-bottom:8px;">Поиск</div>
@@ -174,6 +152,21 @@
     <!-- 🔧 Редактор наряда -->
     <div class="panel" id="orderEditPanel" style="display:none;"></div>
 
+
+    <!-- ⚙️ Управление базой -->
+    <div class="panel" id="baseControlsPanel">
+      <div class="label" style="margin-bottom:6px;">Управление базой</div>
+      <div class="row base-bar" style="align-items:flex-start;">
+        <button id="btnBasePanelToggle" class="ghost">Свернуть список</button>
+        <button id="btnBaseShow" class="ghost">Показать адреса на карте</button>
+        <button id="btnBaseHide" class="ghost">Скрыть адреса на карте</button>
+        <div id="quickCityFilters" class="chips" style="margin:0;">
+          <span class="chip" data-city="саратов">Саратов</span>
+          <span class="chip" data-city="энгельс">Энгельс</span>
+        </div>
+      </div>
+      <div class="hint" style="margin-top:6px;">Лейблы домов показываются на зуме ≥ 15. В ручном режиме: Shift+тащить — прямоугольное выделение.</div>
+    </div>
 
     <!-- 🏠 Единая база -->
     <div class="panel" id="basePanel">
@@ -1030,19 +1023,22 @@
   }
 
   // Печать + экспорт XLSX
-  $('btnPrint').onclick = ()=>{
-    const orderId = state.activeOrderId || (state.orders[0]?.id);
-    if(!orderId) return window.print();
-    const order = state.orders.find(x=>x.id===orderId); if(!order) return;
-    const g=ensureOrderLayer(order);
-    if(g && g.getLayers().length){ map.fitBounds(g.getBounds().pad(0.1)); }
-    const rows = order.items.map(it=>{
-      const base=state.db.items.find(x=>x.id===it.id);
-      return { 'Компания': order.company, 'Цвет': order.color, 'Адрес': base? base.title : it.id, 'Кол': Number(it.qty)||0, 'Код карты': order.code, 'Код наряда': order.code };
-    });
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Печать ${esc(order.code)}</title><style>body{font-family:system-ui,Segoe UI,Roboto,Arial;padding:16px;}h1{margin:0 0 12px;}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ddd;padding:6px 8px;text-align:left;font-size:12px}</style></head><body><h1>Наряд ${esc(order.code)} — ${esc(order.company)} <span style="color:${order.color}">●</span></h1><p>Дата: ${new Date(order.created_at).toLocaleString()}</p><table><thead><tr><th>#</th><th>Компания</th><th>Цвет</th><th>Адрес</th><th>Кол</th><th>Код наряда</th></tr></thead><tbody>${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${esc(r['Компания'])}</td><td><span style="color:${r['Цвет']}">●</span> ${esc(r['Цвет'])}</td><td>${esc(r['Адрес'])}</td><td>${r['Кол']}</td><td>${esc(r['Код наряда'])}</td></tr>`).join('')}</tbody></table><script>window.onload=()=>window.print();<\/script></body></html>`;
-    const w=window.open('about:blank','_blank'); w.document.write(html); w.document.close();
-  };
+  const btnPrint = $('btnPrint');
+  if(btnPrint){
+    btnPrint.onclick = ()=>{
+      const orderId = state.activeOrderId || (state.orders[0]?.id);
+      if(!orderId) return window.print();
+      const order = state.orders.find(x=>x.id===orderId); if(!order) return;
+      const g=ensureOrderLayer(order);
+      if(g && g.getLayers().length){ map.fitBounds(g.getBounds().pad(0.1)); }
+      const rows = order.items.map(it=>{
+        const base=state.db.items.find(x=>x.id===it.id);
+        return { 'Компания': order.company, 'Цвет': order.color, 'Адрес': base? base.title : it.id, 'Кол': Number(it.qty)||0, 'Код карты': order.code, 'Код наряда': order.code };
+      });
+      const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Печать ${esc(order.code)}</title><style>body{font-family:system-ui,Segoe UI,Roboto,Arial;padding:16px;}h1{margin:0 0 12px;}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ddd;padding:6px 8px;text-align:left;font-size:12px}</style></head><body><h1>Наряд ${esc(order.code)} — ${esc(order.company)} <span style="color:${order.color}">●</span></h1><p>Дата: ${new Date(order.created_at).toLocaleString()}</p><table><thead><tr><th>#</th><th>Компания</th><th>Цвет</th><th>Адрес</th><th>Кол</th><th>Код наряда</th></tr></thead><tbody>${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${esc(r['Компания'])}</td><td><span style="color:${r['Цвет']}">●</span> ${esc(r['Цвет'])}</td><td>${esc(r['Адрес'])}</td><td>${r['Кол']}</td><td>${esc(r['Код наряда'])}</td></tr>`).join('')}</tbody></table><script>window.onload=()=>window.print();<\/script></body></html>`;
+      const w=window.open('about:blank','_blank'); w.document.write(html); w.document.close();
+    };
+  }
   function exportOrderXlsx(order){
     const data = order.items.map(it=>{
       const base=state.db.items.find(x=>x.id===it.id);
@@ -1098,9 +1094,12 @@
   }
 
   // Кнопки «Вид»
-  $('btnShowAll').onclick = ()=>{ state.baseVisibleIds = new Set(state.db.items.map(x=>x.id)); applyBaseVisibility(); renderBaseList(); };
-  $('btnHideAll').onclick = ()=>{ state.baseVisibleIds.clear(); applyBaseVisibility(); renderBaseList(); };
-  $('btnFit').onclick = ()=> fitAllVisible();
+  const btnShowAll = $('btnShowAll');
+  if(btnShowAll){ btnShowAll.onclick = ()=>{ state.baseVisibleIds = new Set(state.db.items.map(x=>x.id)); applyBaseVisibility(); renderBaseList(); }; }
+  const btnHideAll = $('btnHideAll');
+  if(btnHideAll){ btnHideAll.onclick = ()=>{ state.baseVisibleIds.clear(); applyBaseVisibility(); renderBaseList(); }; }
+  const btnFit = $('btnFit');
+  if(btnFit){ btnFit.onclick = ()=> fitAllVisible(); }
 
   // Прямоугольное выделение (Shift + drag)
   map.getContainer().addEventListener('mousedown',(e)=>{
