@@ -79,11 +79,28 @@
     .inline-row { display:grid; grid-template-columns: 1fr; gap:8px; }
     .inline-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:6px; }
     .inline-footer { display:flex; align-items:center; gap:8px; margin-top:8px; }
+
+    .base-bar { gap:8px; }
+    .base-bar button { flex:0 0 auto; }
+    #quickCityFilters .chip { margin-top:0; }
   </style>
 </head>
 <body>
 <div id="app">
   <div id="sidebar">
+
+    <!-- ⚙️ Управление базой -->
+    <div class="panel" id="baseControlsPanel">
+      <div class="row base-bar" style="align-items:flex-start;">
+        <button id="btnBasePanelToggle" class="ghost">Свернуть список</button>
+        <button id="btnBaseShow" class="ghost">Показать адреса на карте</button>
+        <button id="btnBaseHide" class="ghost">Скрыть адреса на карте</button>
+        <div id="quickCityFilters" class="chips" style="margin:0;">
+          <span class="chip" data-city="саратов">Саратов</span>
+          <span class="chip" data-city="энгельс">Энгельс</span>
+        </div>
+      </div>
+    </div>
 
     <!-- 🔎 Поиск -->
     <div class="panel">
@@ -142,22 +159,6 @@
       <div id="ordersList" class="list" style="margin-top:8px;"></div>
     </div>
 
-    <!-- 🏠 Единая база -->
-    <div class="panel">
-      <div class="row" style="justify-content:space-between; align-items:center;">
-        <div class="title">Единая база</div>
-        <div class="row">
-          <button id="btnToggleBase" class="ghost">Свернуть адреса базы</button>
-          <button id="btnAddBase" class="ghost">Добавить адрес</button>
-          <span id="countLbl" class="badge"></span>
-        </div>
-      </div>
-      <div class="muted" id="loadMsg" style="margin-top:6px;"></div>
-      <div class="label" style="margin-top:10px;">Фильтр по городам</div>
-      <div id="cityChips" class="chips"></div>
-      <div class="list" id="itemsList" style="margin-top:10px;"></div>
-    </div>
-
     <!-- 🔧 Редактор адреса (контейнер для openBaseEditor) -->
     <div class="panel" id="editPanel" style="display:none;"></div>
 
@@ -175,6 +176,21 @@
       </div>
       <div class="hint" style="margin-top:6px;">Лейблы домов показываются на зуме ≥ 15. В ручном режиме: Shift+тащить — прямоугольное выделение.</div>
     </div>
+
+    <!-- 🏠 Единая база -->
+    <div class="panel" id="basePanel">
+      <div class="row" style="justify-content:space-between; align-items:center;">
+        <div class="title">Единая база</div>
+        <div class="row">
+          <button id="btnAddBase" class="ghost">Добавить адрес</button>
+          <span id="countLbl" class="badge"></span>
+        </div>
+      </div>
+      <div class="muted" id="loadMsg" style="margin-top:6px;"></div>
+      <div class="label" style="margin-top:10px;">Фильтр по городам</div>
+      <div id="cityChips" class="chips"></div>
+      <div class="list" id="itemsList" style="margin-top:10px;"></div>
+    </div>
   </div>
 
   <div id="map"></div>
@@ -190,6 +206,12 @@
   const map = L.map('map').setView([51.533, 46.033], 12);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:20, attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
 
+  const basePanel = $('basePanel');
+  const btnBasePanelToggle = $('btnBasePanelToggle');
+  const btnBaseShow = $('btnBaseShow');
+  const btnBaseHide = $('btnBaseHide');
+  const quickCityFilters = $('quickCityFilters');
+
   // --- Состояние
   const state = {
     db: {version:1, updated_at:new Date().toISOString(), items:[]},
@@ -202,6 +224,7 @@
     searchQuery: '',
     searchMarker: null,
     baseVisibleIds: new Set(),
+    baseMapHidden: false,
 
     orders: [],
     orderLayers: new Map(),
@@ -302,9 +325,9 @@
       const passCity = (state.cityFilter.size===0) || state.cityFilter.has((it.city||'').trim().toLowerCase());
       const passSearch = !state.searchQuery || norm(`${it.city} ${it.title}`).includes(norm(state.searchQuery));
       const passVisible = state.baseVisibleIds.has(it.id);
-      const passNotCollapsed = !state.baseCollapsed;
       const passNotInOrders = !state.addrToOrder.has(it.id);
-      const pass = passCity && passSearch && passVisible && passNotCollapsed && passNotInOrders && Array.isArray(it.polygon) && it.polygon.length>=3;
+      const passMap = !state.baseMapHidden;
+      const pass = passCity && passSearch && passVisible && passNotInOrders && passMap && Array.isArray(it.polygon) && it.polygon.length>=3;
       if(pass){
         const poly = ensureBaseLayer(it);
         if(poly && !map.hasLayer(poly)) poly.addTo(map);
@@ -340,6 +363,8 @@
     renderCityChips();
     renderBaseList();
     applyBaseVisibility();
+    updateBasePanelUI();
+    updateBaseMapButtons();
   }
 
   // --- Поиск/фильтры
@@ -366,18 +391,16 @@
   // --- Список базы
   function renderBaseList(){
     const host=$('itemsList'); host.innerHTML='';
-    if(state.baseCollapsed){
-      const btn = document.getElementById('btnToggleBase');
-      const txt = (btn && btn.textContent) ? btn.textContent : 'Показать адреса базы';
-      host.innerHTML = '<div class="muted">Список адресов скрыт. Нажмите «'+ txt +'» чтобы развернуть.</div>';
-      return;
-    }
     const filtered = state.db.items.filter(it =>
       (state.cityFilter.size===0 || state.cityFilter.has((it.city||'').trim().toLowerCase())) &&
       (!state.searchQuery || norm(`${it.city} ${it.title}`).includes(norm(state.searchQuery)))
     );
     $('countLbl').textContent = state.db.items.length;
     $('searchCount').textContent = `${filtered.length} совпад.`;
+
+    if(state.baseCollapsed){
+      return;
+    }
 
     filtered.slice().sort((a,b)=> (a.city||'').localeCompare(b.city||'', 'ru') || (a.title||'').localeCompare(b.title||'', 'ru')).forEach(it=>{
       const div=document.createElement('div');
@@ -386,7 +409,7 @@
       const checked = state.baseVisibleIds.has(it.id) ? 'checked' : '';
       const inOther = state.addrToOrder.has(it.id);
       div.innerHTML = `
-        <label class="vis"><input type="checkbox" class="visToggle" ${checked} ${state.baseCollapsed?'disabled':''} /></label>
+        <label class="vis"><input type="checkbox" class="visToggle" ${checked} /></label>
         <div>
           <div class="title">${esc(it.title||'(без названия)')}</div>
           <div class="muted">${it.city||'Без города'} • ${it.polygon&&it.polygon.length>=3?'Контур есть':'Контур не задан'} ${inOther? '• <span class="dangerText">в наряде</span>':''}</div>
@@ -407,6 +430,29 @@
       host.appendChild(div);
     });
   }
+
+  function updateBasePanelUI(){
+    if(btnBasePanelToggle){
+      btnBasePanelToggle.textContent = state.baseCollapsed ? 'Развернуть список' : 'Свернуть список';
+    }
+    if(basePanel){
+      basePanel.style.display = state.baseCollapsed ? 'none' : '';
+    }
+  }
+
+  function updateBaseMapButtons(){
+    if(btnBaseShow){ btnBaseShow.disabled = !state.baseMapHidden; }
+    if(btnBaseHide){ btnBaseHide.disabled = state.baseMapHidden; }
+  }
+
+  function renderQuickCityFilters(){
+    if(!quickCityFilters) return;
+    quickCityFilters.querySelectorAll('.chip').forEach(chip=>{
+      const key = (chip.dataset.city||'').trim().toLowerCase();
+      const active = key && state.cityFilter.has(key);
+      chip.classList.toggle('active', !!active);
+    });
+  }
   function focusBaseItem(id,{scroll=true}={}){
     state.selectedBaseId=id; renderBaseList();
     const layer=state.features.get(id); if(layer && map.hasLayer(layer)) map.fitBounds(layer.getBounds().pad(0.3));
@@ -418,12 +464,51 @@
   function uniqueCities(){ const set=new Set(); state.db.items.forEach(it=>{ const c=String(it.city||'').trim(); if(c) set.add(c); }); return Array.from(set).sort((a,b)=>a.localeCompare(b,'ru')); }
   function renderCityChips(){
     const host=$('cityChips'); host.innerHTML='';
-    const all=document.createElement('span'); all.className='chip'+(state.cityFilter.size===0?' active':''); all.textContent='Все'; all.onclick=()=>{ state.cityFilter.clear(); renderBaseList(); applyBaseVisibility(); }; host.appendChild(all);
-    uniqueCities().forEach(city=>{ const key=city.trim().toLowerCase(); const chip=document.createElement('span'); chip.className='chip'+(state.cityFilter.has(key)?' active':''); chip.textContent=city; chip.onclick=()=>{ if(state.cityFilter.has(key)) state.cityFilter.delete(key); else state.cityFilter.add(key); renderBaseList(); applyBaseVisibility(); }; host.appendChild(chip); });
+    const all=document.createElement('span'); all.className='chip'+(state.cityFilter.size===0?' active':''); all.textContent='Все'; all.onclick=()=>{ state.cityFilter.clear(); renderBaseList(); applyBaseVisibility(); renderCityChips(); }; host.appendChild(all);
+    uniqueCities().forEach(city=>{ const key=city.trim().toLowerCase(); const chip=document.createElement('span'); chip.className='chip'+(state.cityFilter.has(key)?' active':''); chip.textContent=city; chip.onclick=()=>{ if(state.cityFilter.has(key)) state.cityFilter.delete(key); else state.cityFilter.add(key); renderBaseList(); applyBaseVisibility(); renderCityChips(); }; host.appendChild(chip); });
+    renderQuickCityFilters();
   }
 
-  // --- Свернуть/раскрыть базу + Добавить
-  $('btnToggleBase').onclick = ()=>{ state.baseCollapsed=!state.baseCollapsed; $('btnToggleBase').textContent = state.baseCollapsed? 'Показать адреса базы' : 'Свернуть адреса базы'; applyBaseVisibility(); renderBaseList(); };
+  // --- Панель управления базой
+  if(btnBasePanelToggle){
+    btnBasePanelToggle.onclick = ()=>{
+      state.baseCollapsed = !state.baseCollapsed;
+      updateBasePanelUI();
+      renderBaseList();
+      applyBaseVisibility();
+    };
+  }
+
+  if(btnBaseShow){
+    btnBaseShow.onclick = ()=>{
+      state.baseMapHidden = false;
+      updateBaseMapButtons();
+      applyBaseVisibility();
+    };
+  }
+
+  if(btnBaseHide){
+    btnBaseHide.onclick = ()=>{
+      state.baseMapHidden = true;
+      updateBaseMapButtons();
+      applyBaseVisibility();
+    };
+  }
+
+  if(quickCityFilters){
+    quickCityFilters.addEventListener('click', (e)=>{
+      const chip = e.target.closest('.chip[data-city]');
+      if(!chip) return;
+      const key = (chip.dataset.city||'').trim().toLowerCase();
+      if(!key) return;
+      if(state.cityFilter.has(key)) state.cityFilter.delete(key); else state.cityFilter.add(key);
+      renderCityChips();
+      renderBaseList();
+      applyBaseVisibility();
+    });
+  }
+
+  // --- Добавить адрес
   $('btnAddBase').onclick = ()=>{
     const id = uid(); const it = { id, title:'Новый адрес', city:'', polygon:null };
     state.db.items.push(it); state.baseVisibleIds.add(id); state.selectedBaseId=id; openBaseEditor(id);
@@ -1088,10 +1173,12 @@
       state.orders.forEach(o=> o.items.forEach(it=> state.addrToOrder.set(it.id, o.id)) );
       state.orders.forEach(o=> refreshOrderLayer(o));
       renderCityChips(); renderBaseList(); applyBaseVisibility(); renderOrdersList();
+      updateBasePanelUI(); updateBaseMapButtons();
       localStorage.setItem('naryad.json', JSON.stringify(getNaryadsObject()));
     }catch(e){
       $('loadMsg').textContent = 'Ошибка загрузки: '+e.message;
       console.warn(e);
+      updateBasePanelUI(); updateBaseMapButtons();
     }
   })();
 
@@ -1118,6 +1205,9 @@
 
   // Подписи при движении/зуме
   map.on('moveend zoomend', addBaseLabelsIfZoom);
+  updateBasePanelUI();
+  updateBaseMapButtons();
+  renderQuickCityFilters();
 })(); // конец IIFE
 </script>
 </body>
