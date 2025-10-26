@@ -1270,6 +1270,12 @@
         if(!handle) return;
       }
       await saveNaryads();
+      if(state.activeOrderId){
+        state.activeOrderId = null;
+        const panel = $('orderEditPanel');
+        if(panel){ panel.style.display = 'none'; }
+        renderOrdersList();
+      }
     }catch(err){
       alert('Ошибка сохранения: '+(err?.message || err));
     }
@@ -1424,9 +1430,13 @@
 
   // Загрузка без кэша
   function normalizeNaryad(j){ return { version: j.version||1, updated_at: j.updated_at || new Date().toISOString(), orders: Array.isArray(j.orders)? j.orders : [] }; }
-  async function loadJsonNoCache(url){
+  async function loadJsonNoCache(url, token){
     const bust = url + (url.includes('?') ? '&' : '?') + 'v=' + Date.now();
-    const r = await fetch(bust, { cache:'no-store', headers:{'Accept':'application/json'} });
+    const headers = { 'Accept':'application/json' };
+    if(token){
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+    const r = await fetch(bust, { cache:'no-store', headers });
     if(!r.ok) throw new Error('HTTP '+r.status);
     return await r.json();
   }
@@ -1452,8 +1462,8 @@
       const dbUrl = state.ghDb ? `https://raw.githubusercontent.com/${state.ghDb.repo}/${state.ghDb.branch}/${state.ghDb.path}` : new URL('database.json', location.href).toString();
       const nrdUrl = state.ghNrd ? `https://raw.githubusercontent.com/${state.ghNrd.repo}/${state.ghNrd.branch}/${state.ghNrd.path}` : new URL('naryad.json', location.href).toString();
       const [db, nrd] = await Promise.all([
-        loadJsonNoCache(dbUrl).catch(e=>{ throw new Error('database.json: '+e.message); }),
-        loadJsonNoCache(nrdUrl).catch(_=> ({orders: []}))
+        loadJsonNoCache(dbUrl, state.ghDb?.token).catch(e=>{ throw new Error('database.json: '+e.message); }),
+        loadJsonNoCache(nrdUrl, state.ghNrd?.token).catch(_=> ({orders: []}))
       ]);
       state.db = normalizeDb(db);
       state.baseVisibleIds = new Set(state.db.items.map(x=>x.id));
