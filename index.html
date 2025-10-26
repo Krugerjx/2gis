@@ -227,7 +227,8 @@
     dragStart: null,
 
     ghDb: null,
-    ghNrd: null
+    ghNrd: null,
+    naryadFsHandle: null
   };
 
   // --- Helpers
@@ -1256,13 +1257,30 @@
   }
 
   // Сохранение/загрузка naryad.json
-  $('btnSaveNaryad').onclick = ()=> saveNaryads();
-  $('btnLoadNaryad').onclick = ()=> $('naryadLoad').click();
+  $('btnSaveNaryad').onclick = async ()=>{
+    try{
+      if(!state.ghNrd && !state.naryadFsHandle && window.showSaveFilePicker){
+        const handle = await pickNaryadHandleForSave();
+        if(!handle) return;
+      }
+      await saveNaryads();
+    }catch(err){
+      alert('Ошибка сохранения: '+(err?.message || err));
+    }
+  };
+  $('btnLoadNaryad').onclick = async ()=>{
+    const handled = await tryLoadNaryadViaPicker();
+    if(!handled) $('naryadLoad').click();
+  };
   $('naryadLoad').addEventListener('change', async (e)=>{
     const f=e.target.files?.[0]; if(!f) return;
     const txt=await f.text();
-    try{ const j=JSON.parse(txt); loadNaryadsFromObject(j); alert('Наряды загружены.'); }
-    catch(err){ alert('Ошибка JSON: '+err.message); }
+    try{
+      const j=JSON.parse(txt);
+      state.naryadFsHandle = null;
+      loadNaryadsFromObject(j);
+      alert('Наряды загружены.');
+    }catch(err){ alert('Ошибка JSON: '+err.message); }
   });
 
   function getNaryadsObject(){ return { version:1, updated_at: new Date().toISOString(), orders: state.orders }; }
@@ -1273,10 +1291,70 @@
     state.orderLayers.forEach(g=> map.removeLayer(g)); state.orderLayers.clear();
     state.orders.forEach(o=> refreshOrderLayer(o));
     renderOrdersList(); applyBaseVisibility();
-    localStorage.setItem('naryad.json', JSON.stringify(getNaryadsObject()));
+    try{ localStorage.setItem('naryad.json', JSON.stringify(getNaryadsObject())); }catch(_){}
+  }
+  async function pickNaryadHandleForSave(){
+    if(!window.showSaveFilePicker) return null;
+    try{
+      const handle = await window.showSaveFilePicker({
+        suggestedName: 'naryad.json',
+        types: [{ description:'JSON', accept:{ 'application/json':['.json'] } }]
+      });
+      state.naryadFsHandle = handle;
+      return handle;
+    }catch(err){
+      if(err?.name !== 'AbortError') console.warn('showSaveFilePicker error', err);
+      return null;
+    }
+  }
+  async function tryLoadNaryadViaPicker(){
+    if(!window.showOpenFilePicker) return false;
+    try{
+      const [handle] = await window.showOpenFilePicker({
+        multiple:false,
+        types:[{ description:'JSON', accept:{ 'application/json':['.json'] } }]
+      });
+      if(!handle) return true;
+      const file = await handle.getFile();
+      const txt = await file.text();
+      const data = JSON.parse(txt);
+      state.naryadFsHandle = handle;
+      loadNaryadsFromObject(data);
+      alert('Наряды загружены из файла.');
+      return true;
+    }catch(err){
+      if(err?.name === 'AbortError') return true;
+      alert('Ошибка чтения файла: '+(err?.message || err));
+      return true;
+    }
+  }
+  async function writeNaryadToHandle(content, silent){
+    const handle = state.naryadFsHandle;
+    if(!handle || typeof handle.createWritable !== 'function') return false;
+    try{
+      let perm = 'granted';
+      if(typeof handle.queryPermission === 'function'){
+        perm = await handle.queryPermission({mode:'readwrite'});
+        if(perm === 'prompt' && typeof handle.requestPermission === 'function'){
+          perm = await handle.requestPermission({mode:'readwrite'});
+        }
+        if(perm !== 'granted') throw new Error('Доступ к файлу отклонён.');
+      }
+      const writable = await handle.createWritable();
+      await writable.write(content);
+      await writable.close();
+      if(!silent) alert('Сохранено в выбранный naryad.json.');
+      return true;
+    }catch(err){
+      console.warn('FileSystem save failed', err);
+      if(!silent) alert('Не удалось сохранить в выбранный naryad.json: '+(err?.message || err));
+      state.naryadFsHandle = null;
+      return false;
+    }
   }
   async function saveNaryads(silent=false){
     const content = JSON.stringify(getNaryadsObject(), null, 2);
+    try{ localStorage.setItem('naryad.json', content); }catch(_){}
     if(state.ghNrd){
       let sha = await ghGetSha(state.ghNrd);
       try{
@@ -1293,10 +1371,12 @@
         throw e;
       }
     }
+    if(await writeNaryadToHandle(content, silent)) return;
+    if(silent) return;
     // локально
     const blob = new Blob([content], {type:'application/json;charset=utf-8'});
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'naryad.json'; a.click(); URL.revokeObjectURL(a.href);
-    if(!silent) alert('Скачан naryad.json — замени его в репозитории.');
+    alert('Скачан naryad.json — замени его в репозитории.');
   }
 
   // Кнопки «Вид»
