@@ -89,8 +89,9 @@
 <div id="app">
   <div id="sidebar">
 
-    <!-- ⚙️ Управление базой -->
+    <!-- ⚙️ Управление базой и видом -->
     <div class="panel" id="baseControlsPanel">
+      <div class="label" style="margin-bottom:6px;">Управление базой</div>
       <div class="row base-bar" style="align-items:flex-start;">
         <button id="btnBasePanelToggle" class="ghost">Свернуть список</button>
         <button id="btnBaseShow" class="ghost">Показать адреса на карте</button>
@@ -100,6 +101,14 @@
           <span class="chip" data-city="энгельс">Энгельс</span>
         </div>
       </div>
+      <div class="label" style="margin:12px 0 6px;">Вид</div>
+      <div class="row view-bar">
+        <button id="btnShowAll" class="ghost">Показать всё</button>
+        <button id="btnHideAll" class="ghost">Скрыть всё</button>
+        <button id="btnFit" class="ghost">Вписать в экран</button>
+        <button id="btnPrint" class="ghost">Распечатать</button>
+      </div>
+      <div class="hint" style="margin-top:6px;">Лейблы домов показываются на зуме ≥ 15. В ручном режиме: Shift+тащить — прямоугольное выделение.</div>
     </div>
 
     <!-- 🔎 Поиск -->
@@ -165,17 +174,6 @@
     <!-- 🔧 Редактор наряда -->
     <div class="panel" id="orderEditPanel" style="display:none;"></div>
 
-    <!-- 👁 Вид -->
-    <div class="panel">
-      <div class="title" style="margin-bottom:6px;">Вид</div>
-      <div class="row">
-        <button id="btnShowAll" class="ghost">Показать всё</button>
-        <button id="btnHideAll" class="ghost">Скрыть всё</button>
-        <button id="btnFit" class="ghost">Вписать в экран</button>
-        <button id="btnPrint" class="ghost">Распечатать</button>
-      </div>
-      <div class="hint" style="margin-top:6px;">Лейблы домов показываются на зуме ≥ 15. В ручном режиме: Shift+тащить — прямоугольное выделение.</div>
-    </div>
 
     <!-- 🏠 Единая база -->
     <div class="panel" id="basePanel">
