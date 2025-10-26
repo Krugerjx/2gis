@@ -105,25 +105,6 @@
 
     <!-- 🗂 Единая база -->
     <div class="panel">
-      <div class="row" style="justify-content:space-between; align-items:center;">
-        <div class="title">Единая база</div>
-        <div class="row">
-          <button id="btnToggleBase" class="ghost">Свернуть адреса базы</button>
-          <button id="btnAddBase" class="ghost">Добавить адрес</button>
-          <span id="countLbl" class="badge"></span>
-        </div>
-      </div>
-      <div class="muted" id="loadMsg" style="margin-top:6px;"></div>
-      <div class="label" style="margin-top:10px;">Фильтр по городам</div>
-      <div id="cityChips" class="chips"></div>
-      <div class="list" id="itemsList" style="margin-top:10px;"></div>
-    </div>
-
-    <!-- ✏️ Инлайн-редактор адреса -->
-    <div class="panel" id="editPanel" style="display:none;"></div>
-
-    <!-- 📤 Загрузка таблицы клиента -->
-    <div class="panel">
       <div class="title">Загрузка таблицы клиента (XLSX/CSV) → Наряд</div>
       <div class="hint" style="margin-top:6px;">Ожидаются столбцы: <b>Адрес</b> и <b>Кол</b>.</div>
       <div class="row" style="margin-top:8px;">
@@ -147,8 +128,7 @@
       </div>
     </div>
 
-    <!-- 📦 Наряды -->
-    <div class="panel">
+<div class="panel">
       <div class="row" style="justify-content:space-between; align-items:center;">
         <div class="title">Собранные наряды</div>
         <div class="row">
@@ -159,6 +139,21 @@
         </div>
       </div>
       <div id="ordersList" class="list" style="margin-top:8px;"></div>
+    </div>
+
+<div class="panel">
+      <div class="row" style="justify-content:space-between; align-items:center;">
+        <div class="title">Единая база</div>
+        <div class="row">
+          <button id="btnToggleBase" class="ghost">Свернуть адреса базы</button>
+          <button id="btnAddBase" class="ghost">Добавить адрес</button>
+          <span id="countLbl" class="badge"></span>
+        </div>
+      </div>
+      <div class="muted" id="loadMsg" style="margin-top:6px;"></div>
+      <div class="label" style="margin-top:10px;">Фильтр по городам</div>
+      <div id="cityChips" class="chips"></div>
+      <div class="list" id="itemsList" style="margin-top:10px;"></div>
     </div>
 
     <!-- 🔧 Редактор наряда -->
@@ -366,6 +361,12 @@
   // --- Список базы
   function renderBaseList(){
     const host=$('itemsList'); host.innerHTML='';
+    if(state.baseCollapsed){
+      const btn = document.getElementById('btnToggleBase');
+      const txt = (btn && btn.textContent) ? btn.textContent : 'Показать адреса базы';
+      host.innerHTML = '<div class="muted">Список адресов скрыт. Нажмите «'+ txt +'» чтобы развернуть.</div>';
+      return;
+    }
     const filtered = state.db.items.filter(it =>
       (state.cityFilter.size===0 || state.cityFilter.has((it.city||'').trim().toLowerCase())) &&
       (!state.searchQuery || norm(`${it.city} ${it.title}`).includes(norm(state.searchQuery)))
@@ -657,7 +658,57 @@
         colorInput=$('colorInput'),
         btnCreateOrder=$('btnCreateOrder');
 
-  let uploadRows=[]; // [{address, qty, foundId|null}]
+  
+  // === Улучшенное сопоставление адресов из XLSX с базой
+  function simpleNormalize(s){
+    if(!s) return '';
+    return String(s)
+      .toLowerCase()
+      .replace(/ё/g,'е')
+      .replace(/\s+/g,' ')
+      .replace(/[,\.]/g,'')
+      .replace(/(^г\.?\s*)|(^город\s*)/g,'')
+      .replace(/\bул\.?\b/g,'ул')
+      .trim();
+  }
+  function extractStreetHouse(s){
+    if(!s) return {street:'',house:''};
+    const t = simpleNormalize(s);
+    const m = t.match(/(.+?)\s+(\d+\w?-?\d*)$/);
+    if(m) return {street:m[1].trim(), house:m[2].trim()};
+    const m2 = t.match(/(.+?)\s+(\d+[а-я]?)/);
+    return { street: (m2?m2[1]:'').trim(), house: (m2?m2[2]:'').trim() };
+  }
+  function matchAddressToBase(addrText){
+    const addrNorm = simpleNormalize(addrText||'');
+    if(!addrNorm) return null;
+    // 1) точное совпадение с title или city+title
+    for(const it of state.db.items){
+      if(simpleNormalize(it.title) === addrNorm) return it.id;
+      if(simpleNormalize(`${it.city||''} ${it.title||''}`) === addrNorm) return it.id;
+    }
+    // 2) includes в обе стороны
+    for(const it of state.db.items){
+      const baseNorm = simpleNormalize(`${it.city||''} ${it.title||''}`);
+      if(baseNorm.includes(addrNorm) || addrNorm.includes(baseNorm)) return it.id;
+    }
+    // 3) улица+дом
+    const {street,house} = extractStreetHouse(addrText);
+    if(street && house){
+      for(const it of state.db.items){
+        const b = simpleNormalize(it.title);
+        if(b.includes(street) && b.includes(house)) return it.id;
+      }
+    }
+    // 4) только улица (fallback)
+    if(street){
+      for(const it of state.db.items){
+        if(simpleNormalize(it.title).includes(street)) return it.id;
+      }
+    }
+    return null;
+  }
+let uploadRows=[]; // [{address, qty, foundId|null}]
 
   fileInput.addEventListener('change', handleFile);
   btnClearUpload.onclick = ()=>{
@@ -682,7 +733,7 @@
     })).filter(x=>x.address);
 
     const baseByTitle = new Map(state.db.items.map(it=> [norm(it.title), it.id] ));
-    uploadRows = mapped.map(r=>({ address:r.address, qty:r.qty, foundId: baseByTitle.get(norm(r.address)) || null }));
+    uploadRows = mapped.map(r=>({ address:r.address, qty:r.qty, foundId: matchAddressToBase(r.address) }));
 
     const hits = uploadRows.filter(x=>x.foundId);
     const miss = uploadRows.filter(x=>!x.foundId);
