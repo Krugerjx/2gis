@@ -251,8 +251,7 @@
   // --- GitHub helpers
   function parseGhFromHashKey(key, fallbackPath, aliases=[]){
     const h = new URLSearchParams(location.hash.slice(1));
-    const token = h.get('token');
-    if(!token) return null;
+    const token = h.get('token') || undefined;
     let gh = null;
     for(const k of [key, ...aliases]){
       const v = h.get(k);
@@ -273,7 +272,9 @@
   }
   async function ghGetSha({repo,branch,path,token}){
     const url = `https://api.github.com/repos/${repo}/contents/${encodePathForContentsAPI(path)}?ref=${encodeURIComponent(branch)}`;
-    const r = await fetch(url, { method:'GET', headers:{ 'Authorization':`Bearer ${token}`, 'Accept':'application/vnd.github+json', 'X-GitHub-Api-Version':'2022-11-28' } });
+    const headers = { 'Accept':'application/vnd.github+json', 'X-GitHub-Api-Version':'2022-11-28' };
+    if(token){ headers['Authorization'] = `token ${token}`; }
+    const r = await fetch(url, { method:'GET', headers });
     if(r.status===404) return null;
     if(!r.ok){ const t=await r.text().catch(()=> ''); throw new Error(`GitHub GET ${r.status}: ${t}`); }
     const j = await r.json(); return j.sha || null;
@@ -281,7 +282,9 @@
   async function ghPut({repo,branch,path,token}, content, sha){
     const url = `https://api.github.com/repos/${repo}/contents/${encodePathForContentsAPI(path)}`;
     const body = { message:`update ${path} via leaflet`, branch, content: toBase64Unicode(content), ...(sha?{sha}:{}) };
-    const r = await fetch(url, { method:'PUT', headers:{ 'Authorization':`Bearer ${token}`, 'Accept':'application/vnd.github+json', 'Content-Type':'application/json', 'X-GitHub-Api-Version':'2022-11-28' }, body: JSON.stringify(body) });
+    const headers = { 'Accept':'application/vnd.github+json', 'Content-Type':'application/json', 'X-GitHub-Api-Version':'2022-11-28' };
+    if(token){ headers['Authorization'] = `token ${token}`; }
+    const r = await fetch(url, { method:'PUT', headers, body: JSON.stringify(body) });
     if(!r.ok){ const txt=await r.text().catch(()=> ''); const err=new Error(`GitHub PUT ${r.status}: ${txt||'Failed to save'}`); err._status=r.status; throw err; }
     return await r.json();
   }
@@ -1367,7 +1370,7 @@
   async function saveNaryads(silent=false){
     const content = JSON.stringify(getNaryadsObject(), null, 2);
     try{ localStorage.setItem('naryad.json', content); }catch(_){}
-    if(state.ghNrd){
+    if(state.ghNrd && state.ghNrd.token){
       let sha = await ghGetSha(state.ghNrd);
       try{
         const res = await ghPut(state.ghNrd, content, sha || undefined);
@@ -1434,7 +1437,7 @@
     const bust = url + (url.includes('?') ? '&' : '?') + 'v=' + Date.now();
     const headers = { 'Accept':'application/json' };
     if(token){
-      headers['Authorization'] = `Bearer ${token}`;
+      headers['Authorization'] = `token ${token}`;
     }
     const r = await fetch(bust, { cache:'no-store', headers });
     if(!r.ok) throw new Error('HTTP '+r.status);
@@ -1484,7 +1487,7 @@
 
   async function saveDb(){
     const content = JSON.stringify({ ...state.db, updated_at:new Date().toISOString() }, null, 2);
-    if(state.ghDb){
+    if(state.ghDb && state.ghDb.token){
       let sha = await ghGetSha(state.ghDb);
       try{
         const res = await ghPut(state.ghDb, content, sha || undefined);
