@@ -249,10 +249,16 @@
   }
 
   // --- GitHub helpers
-  function parseGhFromHashKey(key, fallbackPath){
+  function parseGhFromHashKey(key, fallbackPath, aliases=[]){
     const h = new URLSearchParams(location.hash.slice(1));
-    const gh = h.get(key); const token = h.get('token');
-    if(!gh || !token) return null;
+    const token = h.get('token');
+    if(!token) return null;
+    let gh = null;
+    for(const k of [key, ...aliases]){
+      const v = h.get(k);
+      if(v){ gh = v; break; }
+    }
+    if(!gh) return null;
     const [repoPart, bp] = gh.split('@');
     const [branch, ...pathParts] = (bp||`main:${fallbackPath}`).split(':');
     const path = pathParts.join(':') || fallbackPath;
@@ -1428,8 +1434,9 @@
   // Boot
   (async function boot(){
     // GitHub параметры: #ghdb=OWNER/REPO@branch:path/to/database.json&ghnrd=OWNER/REPO@branch:path/to/naryad.json&token=ghp_xxx
-    state.ghDb  = parseGhFromHashKey('ghdb',  'database.json');
-    state.ghNrd = parseGhFromHashKey('ghnrd', 'naryad.json');
+    // (поддерживается сокращение #gh=... для базы и #naryad=... для нарядов)
+    state.ghDb  = parseGhFromHashKey('ghdb',  'database.json', ['gh']);
+    state.ghNrd = parseGhFromHashKey('ghnrd', 'naryad.json', ['ghnaryad','naryad']);
     if(!state.ghNrd && state.ghDb){
       const basePath = state.ghDb.path.split('/'); basePath[basePath.length-1] = 'naryad.json';
       state.ghNrd = { ...state.ghDb, path: basePath.join('/') };
