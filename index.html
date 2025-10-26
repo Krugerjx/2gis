@@ -110,7 +110,7 @@
     <!-- 🗂 Загрузка таблицы клиента → Наряд (поднято выше базы) -->
     <div class="panel">
       <div class="title">Загрузка таблицы клиента (XLSX/CSV) → Наряд</div>
-      <div class="hint" style="margin-top:6px;">Ожидаются столбцы: <b>Адрес</b> и <b>Кол</b>.</div>
+      <div class="hint" style="margin-top:6px;">Ожидаются столбцы: <b>Адрес</b> или связка <b>Нас. пункт</b> + <b>Улица</b> + <b>Дом</b>, а также <b>Кол</b>.</div>
       <div class="row" style="margin-top:8px;">
         <input id="fileInput" type="file" accept=".xlsx,.xls,.csv" />
         <button id="btnClearUpload" class="ghost">Очистить</button>
@@ -806,6 +806,96 @@
     return null;
   }
 
+  const HEADER_ALIASES = {
+    address: ['адрес', 'address'],
+    city: ['наспункт', 'населенныипункт', 'населенныйпункт', 'населённыйпункт', 'населёныйпункт', 'населеныйпункт', 'город', 'г'],
+    street: ['улица', 'улицы', 'ул', 'street', 'проезд', 'проспект', 'пр', 'переулок', 'пер', 'бульвар', 'булвар', 'шоссе', 'тракт', 'аллея', 'площадь', 'пл', 'дорога'],
+    house: ['дом', 'номердома', 'нодома', 'д', 'строение', 'стр', 'корпус', 'корп', 'кор', 'литер', 'лит', 'house'],
+    qty: ['кол', 'колво', 'количество', 'qty', 'count']
+  };
+
+  function normalizeHeaderKey(name){
+    return String(name||'')
+      .replace(/^[\uFEFF\ufeff]/,'')
+      .toLowerCase()
+      .replace(/ё/g,'е')
+      .replace(/[^a-z0-9а-я]+/g,'')
+      .trim();
+  }
+
+  function collectHeaders(rows){
+    const map = new Map();
+    rows.forEach(row=>{
+      Object.keys(row||{}).forEach(key=>{
+        if(key==null) return;
+        const trimmed = String(key).replace(/^[\uFEFF\ufeff]/,'').trim();
+        if(!trimmed || map.has(trimmed)) return;
+        map.set(trimmed, { original: trimmed, norm: normalizeHeaderKey(trimmed) });
+      });
+    });
+    return Array.from(map.values());
+  }
+
+  function findHeader(headers, aliases){
+    for(const alias of aliases){
+      const hit = headers.find(h=>h.norm === alias);
+      if(hit) return hit.original;
+    }
+    for(const alias of aliases){
+      if(alias.length<=1) continue;
+      const hit = headers.find(h=> h.norm && h.norm.includes(alias));
+      if(hit) return hit.original;
+    }
+    return null;
+  }
+
+  function findAllHeaders(headers, aliases){
+    const used = new Set();
+    const result = [];
+    aliases.forEach(alias=>{
+      headers.forEach(h=>{
+        if(used.has(h.original) || !h.norm) return;
+        if(h.norm === alias){
+          result.push(h.original);
+          used.add(h.original);
+        }
+      });
+    });
+    aliases.forEach(alias=>{
+      if(alias.length<=1) return;
+      headers.forEach(h=>{
+        if(used.has(h.original) || !h.norm) return;
+        if(h.norm.includes(alias)){
+          result.push(h.original);
+          used.add(h.original);
+        }
+      });
+    });
+    return result;
+  }
+
+  function pickText(row, key){
+    if(!key) return '';
+    const val = row[key];
+    if(val===undefined || val===null) return '';
+    if(typeof val==='string') return val.trim();
+    if(typeof val==='number') return Number.isNaN(val)? '' : String(val);
+    return String(val).trim();
+  }
+
+  function pickNumber(row, key){
+    if(!key) return 0;
+    const val = row[key];
+    if(val===undefined || val===null) return 0;
+    if(typeof val==='number') return Number.isNaN(val)? 0 : val;
+    if(typeof val==='string'){
+      const normalized = val.replace(/\s+/g,'').replace(',', '.');
+      const num = Number(normalized);
+      return Number.isNaN(num)? 0 : num;
+    }
+    return 0;
+  }
+
   let uploadRows=[]; // [{address, qty, foundId|null}]
 
   fileInput.addEventListener('change', handleFile);
@@ -825,30 +915,82 @@
       const ws = wb.Sheets[wb.SheetNames[0]];
       rows = XLSX.utils.sheet_to_json(ws, {defval:''});
     }
-    const mapped = rows.map(r=>({
-      address: String(r['Адрес'] ?? r['адрес'] ?? r['Address'] ?? '').trim(),
-      qty: Number(r['Кол'] ?? r['кол'] ?? r['Количество'] ?? 0) || 0
-    })).filter(x=>x.address);
+    rows = rows.map(row=>{
+      const normalized={};
+      Object.entries(row||{}).forEach(([key,val])=>{
+        if(key==null) return;
+        const trimmed = String(key).replace(/^[\uFEFF\ufeff]/,'').trim();
+        if(!trimmed) return;
+        normalized[trimmed] = val;
+      });
+      return normalized;
+    });
+
+    const headers = collectHeaders(rows);
+    const addressKey = findHeader(headers, HEADER_ALIASES.address);
+    const cityKey = findHeader(headers, HEADER_ALIASES.city);
+    const streetKey = findHeader(headers, HEADER_ALIASES.street);
+    const houseKeys = findAllHeaders(headers, HEADER_ALIASES.house);
+    const qtyKey = findHeader(headers, HEADER_ALIASES.qty);
+    const qtyKeys = qtyKey ? [qtyKey] : findAllHeaders(headers, HEADER_ALIASES.qty);
+    const qtyMissing = qtyKeys.length===0;
+
+    const mapped = rows.map(row=>{
+      let address = pickText(row, addressKey);
+      if(!address){
+        const parts=[];
+        const city = pickText(row, cityKey);
+        if(city) parts.push(city);
+        const street = pickText(row, streetKey);
+        if(street) parts.push(street);
+        const houseParts = houseKeys.map(h=>pickText(row, h)).filter(Boolean);
+        if(houseParts.length) parts.push(houseParts.join(' '));
+        address = parts.filter(Boolean).join(', ');
+      }
+      let qty = 0;
+      if(qtyKeys.length){
+        qty = pickNumber(row, qtyKeys[0]);
+      }
+      if(Number.isNaN(qty) || qty<0) qty = 0;
+      return { address: address.trim(), qty };
+    }).filter(x=>x.address);
+
+    if(!mapped.length){
+      uploadRows=[];
+      uploadStats.innerHTML = 'Не удалось найти адреса в файле.';
+      matchTableWrap.style.display='none';
+      matchTable.innerHTML='';
+      return;
+    }
 
     uploadRows = mapped.map(r=>({ address:r.address, qty:r.qty, foundId: matchAddressToBase(r.address) }));
 
     const hits = uploadRows.filter(x=>x.foundId);
     const miss = uploadRows.filter(x=>!x.foundId);
-    uploadStats.innerHTML = `Всего строк: <b>${uploadRows.length}</b> • найдены в базе: <b>${hits.length}</b> • не найдены: <b>${miss.length}</b>`;
+    let stats = `Всего строк: <b>${uploadRows.length}</b> • найдены в базе: <b>${hits.length}</b> • не найдены: <b>${miss.length}</b>`;
+    if(qtyMissing) stats += ' • <span class="dangerText">Колонка количества не найдена, все значения = 0</span>';
+    uploadStats.innerHTML = stats;
     renderMatchTable();
   }
 
   function parseCSV(txt){
     const sep = txt.includes(';') && !txt.includes(',') ? ';' : ',';
-    const lines = txt.split(/\r?\n/).filter(Boolean);
-    const header = lines[0].split(sep).map(s=>s.trim());
-    const idxA = header.findIndex(h=> /^(Адрес|Address)$/i.test(h));
-    const idxQ = header.findIndex(h=> /^(Кол|Количество)$/i.test(h));
+    const lines = txt.split(/\r?\n/);
+    if(!lines.length) return [];
+    const headerLine = lines.shift();
+    if(!headerLine) return [];
+    const header = headerLine.replace(/^[\uFEFF\ufeff]/,'').split(sep).map(s=>s.replace(/^"|"$/g,'').trim());
     const arr = [];
-    for(let i=1;i<lines.length;i++){
-      const cells=lines[i].split(sep);
-      arr.push({ 'Адрес': cells[idxA]||'', 'Кол': cells[idxQ]||0 });
-    }
+    lines.forEach(line=>{
+      if(!line.trim()) return;
+      const cells = line.split(sep).map(s=>s.replace(/^"|"$/g,'').trim());
+      const obj={};
+      header.forEach((h,idx)=>{
+        if(!h) return;
+        obj[h] = cells[idx] ?? '';
+      });
+      arr.push(obj);
+    });
     return arr;
   }
 
