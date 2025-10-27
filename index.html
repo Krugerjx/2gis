@@ -12,6 +12,8 @@
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <!-- html2canvas (снимок карты) -->
   <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <!-- ExcelJS (XLSX со стилями) -->
+  <script src="https://cdn.jsdelivr.net/npm/exceljs@4.3.0/dist/exceljs.min.js"></script>
 
   <style>
     html, body { height:100%; margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; }
@@ -194,8 +196,27 @@
 <script>
 (function(){
   const DEFAULT_BASE_COLOR = '#7c3aed';
+  const DEFAULT_ORDER_COLOR = '#0EA5E9';
   const LABEL_ZOOM_MIN = 15;
   const $ = id => document.getElementById(id);
+
+  function normalizeHexColor(value, fallback = DEFAULT_ORDER_COLOR){
+    const toHex = (input)=>{
+      if(typeof input !== 'string') return null;
+      let hex = input.trim();
+      if(!hex) return null;
+      if(!hex.startsWith('#')) hex = '#'+hex;
+      if(/^#([0-9a-f]{3})$/i.test(hex)){
+        hex = '#'+hex.slice(1).split('').map(ch=> ch+ch).join('');
+      }
+      if(/^#([0-9a-f]{6})$/i.test(hex)){
+        return '#'+hex.slice(1).toUpperCase();
+      }
+      return null;
+    };
+    const fallbackHex = toHex(fallback) || '#E11D48';
+    return toHex(value) || fallbackHex;
+  }
 
   // --- Карта
   const map = L.map('map').setView([51.533, 46.033], 12);
@@ -779,6 +800,10 @@
   function refreshOrderLayer(order){
     const group = ensureOrderLayer(order);
     group.clearLayers();
+    const layerColor = normalizeHexColor(order.color, DEFAULT_ORDER_COLOR);
+    if(layerColor !== order.color){
+      order.color = layerColor;
+    }
     order.items.forEach(({id})=>{
       const it = state.db.items.find(x=>x.id===id);
       if(!it || !Array.isArray(it.polygon) || it.polygon.length<3) return;
@@ -808,6 +833,8 @@
       .slice()
       .sort((a,b)=> (b.created_at||'').localeCompare(a.created_at||''))
       .forEach(order=>{
+        const colorHex = normalizeHexColor(order.color, DEFAULT_ORDER_COLOR);
+        if(colorHex !== order.color){ order.color = colorHex; }
         const total = order.items.reduce((s,x)=> s + (Number(x.qty)||0), 0);
         const div=document.createElement('div');
         div.className='item'+(state.activeOrderId===order.id?' active':'');
@@ -1190,7 +1217,7 @@
     if(!hits.length) return alert('Нет найденных адресов, добавить нечего.');
 
     const company = companyInput.value.trim() || 'Без названия';
-    const color = colorInput.value || '#e11d48';
+    const color = normalizeHexColor(colorInput.value || DEFAULT_ORDER_COLOR, DEFAULT_ORDER_COLOR);
 
     const items=[]; const skipped=[];
     hits.forEach(h=>{
@@ -1249,7 +1276,9 @@
     const companyInput = div.querySelector('#eCompany');
     div.querySelector('#eSave').onclick = ()=>{
       order.company = companyInput ? (companyInput.value.trim()||'Без названия') : 'Без названия';
-      order.color = colorInput && colorInput.value ? colorInput.value : order.color;
+      const nextColor = colorInput && colorInput.value ? colorInput.value : order.color;
+      order.color = normalizeHexColor(nextColor, order.color || DEFAULT_ORDER_COLOR);
+      if(colorInput){ colorInput.value = order.color; }
       if(colorDot){ colorDot.style.color = order.color; }
       refreshOrderLayer(order);
       renderOrdersList();
@@ -1268,6 +1297,10 @@
   }
 
   function renderOrderTable(order){
+    const colorHex = normalizeHexColor(order.color, DEFAULT_ORDER_COLOR);
+    if(colorHex !== order.color){
+      order.color = colorHex;
+    }
     const t=$('orderTable'); t.innerHTML='';
     const thead=document.createElement('thead');
     thead.innerHTML='<tr><th>#</th><th>Город</th><th>Улица</th><th>Дом</th><th>Цвет</th><th>Кол</th><th></th></tr>';
@@ -1343,7 +1376,7 @@
 
   // Создание пустого наряда вручную
   $('btnAddManual').onclick = ()=>{
-    const order={ id:uid(), code:makeOrderCode(), company:'Новый заказчик', color:'#0ea5e9', items:[], created_at:new Date().toISOString() };
+    const order={ id:uid(), code:makeOrderCode(), company:'Новый заказчик', color: normalizeHexColor(DEFAULT_ORDER_COLOR, DEFAULT_ORDER_COLOR), items:[], created_at:new Date().toISOString() };
     state.orders.push(order);
     refreshOrderLayer(order); renderOrdersList(); openOrderEditor(order.id); saveNaryads(true).catch(()=>{});
   };
@@ -1389,9 +1422,12 @@
     return 'FF' + clean.toUpperCase();
   }
 
-  function exportOrderXlsx(order){
+  async function exportOrderXlsx(order){
+    if(!window.ExcelJS || !window.ExcelJS.Workbook){
+      throw new Error('ExcelJS не загружен, не удалось сформировать XLSX.');
+    }
     const rows = order.items.map(it=>{
-      const base=state.db.items.find(x=>x.id===it.id);
+      const base = state.db.items.find(x=>x.id===it.id);
       if(!base) return null;
       const addr = extractOrderAddress(base);
       return { addr, qty: Number(it.qty)||0, fallback: base.title };
@@ -1399,12 +1435,32 @@
     const maxEntrances = rows.reduce((m,r)=> Math.max(m, r.qty), 0);
     const header = ['Город','Улица','Дом','Цвет','Компания','Кол'];
     for(let i=1;i<=maxEntrances;i++) header.push(String(i));
-    const aoa = [];
     const totalCols = header.length;
-    aoa.push([`Код наряда: ${order.code}`,...Array(Math.max(totalCols-1,0)).fill('')]);
-    aoa.push([`Компания: ${order.company}`,...Array(Math.max(totalCols-1,0)).fill('')]);
-    aoa.push(header);
-    const colorFill = hexToXlsxRgb(order.color);
+    const colorHex = normalizeHexColor(order.color, DEFAULT_ORDER_COLOR);
+    const colorFill = hexToXlsxRgb(colorHex);
+
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Наряд', {
+      views:[{ state:'frozen', ySplit:3 }]
+    });
+
+    sheet.mergeCells(1,1,1,totalCols);
+    const orderCell = sheet.getCell(1,1);
+    orderCell.value = `Код наряда: ${order.code}`;
+    orderCell.font = { bold:true, size:14 };
+
+    sheet.mergeCells(2,1,2,totalCols);
+    const companyCell = sheet.getCell(2,1);
+    companyCell.value = `Компания: ${order.company}`;
+    companyCell.font = { bold:true, size:14 };
+
+    const headerRow = sheet.addRow(header);
+    headerRow.font = { bold:true };
+    headerRow.alignment = { horizontal:'center', vertical:'middle' };
+    headerRow.eachCell(cell=>{
+      cell.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FFECECEC' } };
+    });
+
     rows.forEach(r=>{
       const street = r.addr.street || splitAddressParts({ title:r.fallback, city:r.addr.city }).street || r.fallback;
       const line = [
@@ -1416,56 +1472,31 @@
         r.qty
       ];
       for(let i=1;i<=maxEntrances;i++) line.push('');
-      aoa.push(line);
+      const row = sheet.addRow(line);
+      const colorCell = row.getCell(4);
+      colorCell.value = ' ';
+      colorCell.alignment = { horizontal:'center', vertical:'middle' };
+      if(colorFill){
+        colorCell.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:colorFill } };
+      }
     });
-    const ws = XLSX.utils.aoa_to_sheet(aoa);
-    const lastCol = totalCols - 1;
-    ws['!merges'] = [
-      { s:{r:0,c:0}, e:{r:0,c:lastCol} },
-      { s:{r:1,c:0}, e:{r:1,c:lastCol} }
-    ];
-    ws['!cols'] = [
-      { wch: 16 },
-      { wch: 28 },
-      { wch: 12 },
-      { wch: 10 },
-      { wch: 24 },
-      { wch: 6 },
-      ...Array.from({length:maxEntrances}, ()=> ({ wch:4 }))
-    ];
-    const titleCells = ['A1','A2'];
-    titleCells.forEach(ref=>{
-      if(ws[ref]) ws[ref].s = { font:{ bold:true, sz:14 } };
-    });
-    const headerRowIndex = 2;
-    for(let c=0;c<totalCols;c++){
-      const ref = XLSX.utils.encode_cell({ r:headerRowIndex, c });
-      if(ws[ref]) ws[ref].s = {
-        font:{ bold:true },
-        fill:{ fgColor:{ rgb:'FFECECEC' } },
-        alignment:{ horizontal:'center' }
-      };
-    }
-    if(colorFill){
-      const colorColIndex = 3;
-      const dataStartRow = 3;
-      rows.forEach((_, idx)=>{
-        const ref = XLSX.utils.encode_cell({ r:dataStartRow + idx, c:colorColIndex });
-        if(!ws[ref]) ws[ref] = { t:'s', v:'' };
-        ws[ref].t = 's';
-        if(typeof ws[ref].v !== 'string' || ws[ref].v.trim()===''){
-          ws[ref].v = ' ';
-        }
-        ws[ref].s = {
-          fill:{ patternType:'solid', fgColor:{ rgb:colorFill } },
-          alignment:{ horizontal:'center' }
-        };
-      });
-    }
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Наряд');
-    const fn = `naryad_${order.code}.xlsx`;
-    XLSX.writeFile(wb, fn, { bookType:'xlsx', cellStyles:true, compression:true });
+
+    const columnWidths = [16,28,12,10,24,6];
+    for(let i=0;i<maxEntrances;i++) columnWidths.push(4);
+    sheet.columns = columnWidths.map(width=>({ width }));
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `naryad_${order.code}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(()=>{
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 0);
   }
 
   async function captureOrderMap(order){
@@ -1525,7 +1556,13 @@
       alert('Добавьте в наряд хотя бы один адрес.');
       return;
     }
-    exportOrderXlsx(order);
+    try{
+      await exportOrderXlsx(order);
+    }catch(err){
+      console.error(err);
+      alert(err?.message || 'Не удалось сформировать таблицу наряда.');
+      return;
+    }
     try{
       await captureOrderMap(order);
     }catch(err){
@@ -1571,7 +1608,11 @@
   function loadNaryadsFromObject(obj){
     state.orders = Array.isArray(obj.orders)? obj.orders : [];
     state.addrToOrder.clear();
-    state.orders.forEach(o=> o.items.forEach(it=> state.addrToOrder.set(it.id, o.id)) );
+    state.orders.forEach(o=>{
+      o.color = normalizeHexColor(o.color, DEFAULT_ORDER_COLOR);
+      if(!Array.isArray(o.items)) o.items = [];
+      o.items.forEach(it=> state.addrToOrder.set(it.id, o.id));
+    });
     state.orderLayers.forEach(g=> map.removeLayer(g)); state.orderLayers.clear();
     state.orders.forEach(o=> refreshOrderLayer(o));
     renderOrdersList(); applyBaseVisibility();
