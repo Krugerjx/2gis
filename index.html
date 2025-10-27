@@ -1415,17 +1415,21 @@
       const dataStartRow = 3;
       rows.forEach((_, idx)=>{
         const ref = XLSX.utils.encode_cell({ r:dataStartRow + idx, c:colorColIndex });
-        if(!ws[ref]) ws[ref] = { t:'s', v:' ' };
-        const style = ws[ref].s ? { ...ws[ref].s } : {};
-        style.fill = { patternType:'solid', fgColor:{ rgb:colorFill }, bgColor:{ rgb:colorFill } };
-        style.alignment = { horizontal:'center' };
-        ws[ref].s = style;
+        if(!ws[ref]) ws[ref] = { t:'s', v:'' };
+        ws[ref].t = 's';
+        if(typeof ws[ref].v !== 'string' || ws[ref].v.trim()===''){
+          ws[ref].v = ' ';
+        }
+        ws[ref].s = {
+          fill:{ patternType:'solid', fgColor:{ rgb:colorFill } },
+          alignment:{ horizontal:'center' }
+        };
       });
     }
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Наряд');
     const fn = `naryad_${order.code}.xlsx`;
-    XLSX.writeFile(wb, fn);
+    XLSX.writeFile(wb, fn, { bookType:'xlsx', cellStyles:true, compression:true });
   }
 
   async function captureOrderMap(order){
