@@ -1,12 +1,12 @@
 {
   "version": 1,
-  "updated_at": "2025-10-27T20:11:39.274Z",
+  "updated_at": "2025-10-27T21:05:04.144Z",
   "orders": [
     {
       "id": "a251e44d-b176-4c6d-b825-5d002ef259c7",
       "code": "NRD-20251027-8453",
       "company": "бокс",
-      "color": "#0433ff",
+      "color": "#FF9300",
       "items": [
         {
           "id": "91b84ad6-3dab-4e08-b52a-037a438c448d",
