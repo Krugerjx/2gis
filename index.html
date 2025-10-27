@@ -1342,48 +1342,17 @@
       const w=window.open('about:blank','_blank'); w.document.write(html); w.document.close();
     };
   }
-  function colorHexToEmoji(hex){
-    if(!hex) return '⬜';
-    let clean = String(hex).trim();
-    if(!clean) return '⬜';
+  function hexToXlsxRgb(hex){
+    if(typeof hex !== 'string') return null;
+    let clean = hex.trim();
+    if(!clean) return null;
     if(clean.startsWith('#')) clean = clean.slice(1);
-    if(!(clean.length===3 || clean.length===6) || /[^0-9a-f]/i.test(clean)) return '⬤';
-    if(clean.length===3) clean = clean.split('').map(ch=> ch+ch).join('');
-    const r = parseInt(clean.slice(0,2),16)/255;
-    const g = parseInt(clean.slice(2,4),16)/255;
-    const b = parseInt(clean.slice(4,6),16)/255;
-    const max = Math.max(r,g,b);
-    const min = Math.min(r,g,b);
-    const diff = max-min;
-    const l = (max+min)/2;
-    if(diff < 1e-4){
-      if(l < 0.2) return '⬛';
-      if(l > 0.85) return '⬜';
-      return '⬜';
+    if(clean.length === 3){
+      if(/[^0-9a-f]/i.test(clean)) return null;
+      clean = clean.split('').map(ch=> ch+ch).join('');
     }
-    const s = diff / (1 - Math.abs(2*l - 1) || 1);
-    if(s < 0.12){
-      if(l < 0.2) return '⬛';
-      if(l > 0.85) return '⬜';
-      return '⬜';
-    }
-    let h = 0;
-    switch(max){
-      case r: h = ((g-b)/diff) % 6; break;
-      case g: h = (b-r)/diff + 2; break;
-      case b: h = (r-g)/diff + 4; break;
-    }
-    h = Math.round(h*60);
-    if(h < 0) h += 360;
-    if(l < 0.12) return '⬛';
-    if(l > 0.9) return '⬜';
-    if(h < 20 || h >= 340) return '🟥';
-    if(h < 50) return '🟧';
-    if(h < 75) return '🟨';
-    if(h < 155) return '🟩';
-    if(h < 210) return '🟦';
-    if(h < 280) return '🟦';
-    return '🟪';
+    if(clean.length !== 6 || /[^0-9a-f]/i.test(clean)) return null;
+    return 'FF' + clean.toUpperCase();
   }
 
   function exportOrderXlsx(order){
@@ -1400,13 +1369,13 @@
     aoa.push([`Код наряда: ${order.code}`,...Array(Math.max(totalCols-1,0)).fill('')]);
     aoa.push([`Компания: ${order.company}`,...Array(Math.max(totalCols-1,0)).fill('')]);
     aoa.push(header);
-    const colorChip = colorHexToEmoji(order.color);
+    const colorFill = hexToXlsxRgb(order.color);
     rows.forEach(r=>{
       const line = [
         r.parts.city || '',
         r.parts.street || r.fallback,
         r.parts.house || '',
-        colorChip,
+        ' ',
         order.company,
         r.qty
       ];
@@ -1440,6 +1409,18 @@
         fill:{ fgColor:{ rgb:'FFECECEC' } },
         alignment:{ horizontal:'center' }
       };
+    }
+    if(colorFill){
+      const colorColIndex = 3;
+      const dataStartRow = 3;
+      rows.forEach((_, idx)=>{
+        const ref = XLSX.utils.encode_cell({ r:dataStartRow + idx, c:colorColIndex });
+        if(!ws[ref]) ws[ref] = { t:'s', v:' ' };
+        const style = ws[ref].s ? { ...ws[ref].s } : {};
+        style.fill = { patternType:'solid', fgColor:{ rgb:colorFill }, bgColor:{ rgb:colorFill } };
+        style.alignment = { horizontal:'center' };
+        ws[ref].s = style;
+      });
     }
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Наряд');
