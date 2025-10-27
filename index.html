@@ -10,6 +10,8 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <!-- SheetJS (XLSX/CSV) -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <!-- html2canvas (снимок карты) -->
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 
   <style>
     html, body { height:100%; margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; }
@@ -36,6 +38,8 @@
     .label { font-size:12px; color:#64748b; }
     .hint { font-size:12px; color:#475569; }
     mark { background:#fef08a; padding:0 2px; border-radius:3px; }
+
+    .color-dot { display:inline-flex; width:14px; height:14px; border-radius:50%; border:1px solid rgba(0,0,0,.15); box-shadow:0 0 0 1px rgba(255,255,255,.8); }
 
     /* Чипы городов */
     .chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
@@ -195,7 +199,11 @@
 
   // --- Карта
   const map = L.map('map').setView([51.533, 46.033], 12);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:20, attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+    maxZoom:20,
+    attribution:'&copy; OpenStreetMap contributors',
+    crossOrigin:'anonymous'
+  }).addTo(map);
 
   const basePanel = $('basePanel');
   const btnBasePanelToggle = $('btnBasePanelToggle');
@@ -241,6 +249,30 @@
     const s=String(t||'').trim();
     const m=s.match(/,\s*([^,]+)\s*$/); if(m) return m[1].replace(/^(дом|д\.)\s*/i,'').trim();
     const m2=s.match(/(\d+[0-9A-Za-zА-Яа-яЁё\/\-]*?)\s*$/); return m2?m2[1]:s;
+  }
+  function splitAddressParts(base){
+    const rawParts = String(base?.title||'').split(',').map(p=>p.trim()).filter(Boolean);
+    let city = base?.city ? String(base.city).trim() : '';
+    if(!city && rawParts.length){
+      const first = rawParts[0];
+      if(/^г\.?/i.test(first)) city = first.replace(/^г\.?/i,'').trim();
+      else if(/^город/i.test(first)) city = first.replace(/^город/i,'').trim();
+    }
+    let rest = String(base?.title||'').trim();
+    if(city){
+      const cityPattern = new RegExp(`^\s*(?:г\.?\s*)?${city.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}\s*,?\s*`, 'i');
+      rest = rest.replace(cityPattern, '');
+    }
+    const parts = rest.split(',').map(p=>p.trim()).filter(Boolean);
+    let house = '';
+    if(parts.length){
+      const last = parts[parts.length-1];
+      if(/[0-9]/.test(last)){ house = last.replace(/^(дом|д\.)\s*/i,'').trim(); parts.pop(); }
+    }
+    let street = parts.join(', ').trim();
+    if(!street && rest && !house){ street = rest; }
+    street = street.replace(/^(ул\.?|улица|пр\.?|проспект|пер\.?|переулок|бульвар|бул\.?|шоссе|тракт|аллея|площадь|пл\.?|дорога|набережная|наб\.?|мкр\.?|микрорайон)\s*/i,'').trim();
+    return { city, street, house: house || extractHouse(base?.title||'') };
   }
   function uid(){ return (crypto?.randomUUID?.() || (Date.now().toString(36)+Math.random().toString(36).slice(2,8))); }
   function makeOrderCode(){
@@ -735,6 +767,13 @@
       poly.on('click',()=>{ if(state.activeOrderId===order.id) toggleAddrInActiveOrder(id); });
       poly.bindTooltip(`${esc(it.title)}<br>Кол: ${order.items.find(x=>x.id===id)?.qty||0}`, {sticky:true});
       group.addLayer(poly);
+      const center = poly.getBounds().getCenter();
+      const icon = L.divIcon({
+        className:'house-label',
+        html:`<span class="hl" style="border-color:${order.color}; color:${order.color};">${esc(extractHouse(it.title))}</span>`
+      });
+      const label = L.marker(center, { icon, interactive:false });
+      group.addLayer(label);
     });
   }
   function renderOrdersList(){
@@ -1171,7 +1210,7 @@
       <div class="row" style="margin-top:8px;">
         <button id="eSelectAllInView" class="ghost">Добавить дома в кадре</button>
         <button id="eClearSelection" class="ghost">Очистить выделение</button>
-        <button id="eExportXlsx" class="ghost">Экспорт таблицы (XLSX)</button>
+        <button id="eGenerate" class="primary">Сформировать наряд</button>
       </div>
       <div style="max-height:220px; overflow:auto; margin-top:8px;">
         <table id="orderTable"></table>
@@ -1186,7 +1225,7 @@
     div.querySelector('#eClose').onclick = ()=>{ state.activeOrderId=null; host.style.display='none'; };
     div.querySelector('#eSelectAllInView').onclick = ()=> selectAllBaseInViewIntoOrder(order);
     div.querySelector('#eClearSelection').onclick = ()=>{ state.selection.clear(); };
-    div.querySelector('#eExportXlsx').onclick = ()=> exportOrderXlsx(order);
+    div.querySelector('#eGenerate').onclick = ()=> generateOrderPackage(order);
 
     renderOrderTable(order);
     ensureOrderLayer(order).addTo(map);
@@ -1197,13 +1236,21 @@
   function renderOrderTable(order){
     const t=$('orderTable'); t.innerHTML='';
     const thead=document.createElement('thead');
-    thead.innerHTML='<tr><th>#</th><th>Адрес</th><th>Кол</th><th></th></tr>';
+    thead.innerHTML='<tr><th>#</th><th>Город</th><th>Улица</th><th>Дом</th><th>Цвет</th><th>Кол</th><th></th></tr>';
     t.appendChild(thead);
     const tbody=document.createElement('tbody');
     order.items.forEach((it,i)=>{
       const base=state.db.items.find(x=>x.id===it.id); if(!base) return;
+      const parts = splitAddressParts(base);
       const tr=document.createElement('tr');
-      tr.innerHTML=`<td>${i+1}</td><td>${esc(base.title)}</td><td><input type="number" class="qty" min="0" value="${Number(it.qty)||0}" style="width:80px"></td><td><button class="ghost btnRemove">Убрать</button></td>`;
+      tr.innerHTML=`
+        <td>${i+1}</td>
+        <td>${esc(parts.city||'')}</td>
+        <td>${esc(parts.street||'')}</td>
+        <td>${esc(parts.house||'')}</td>
+        <td><span class="color-dot" style="background:${order.color}"></span></td>
+        <td><input type="number" class="qty" min="0" value="${Number(it.qty)||0}" style="width:70px"></td>
+        <td><button class="ghost btnRemove">Убрать</button></td>`;
       tr.querySelector('.qty').onchange = (e)=>{
         it.qty = Number(e.target.value)||0;
         refreshOrderLayer(order); renderOrdersList(); saveNaryads(true).catch(()=>{});
@@ -1296,13 +1343,147 @@
     };
   }
   function exportOrderXlsx(order){
-    const data = order.items.map(it=>{
+    const rows = order.items.map(it=>{
       const base=state.db.items.find(x=>x.id===it.id);
-      return { 'Адрес': base? base.title : it.id, 'Компания': order.company, 'Цвет': order.color, 'Кол': Number(it.qty)||0, 'Код карты': order.code, 'Код наряда': order.code };
+      const parts = splitAddressParts(base);
+      return { parts, qty: Number(it.qty)||0, fallback: base? base.title : it.id };
     });
-    const ws = XLSX.utils.json_to_sheet(data, { header:['Компания','Цвет','Адрес','Кол','Код карты','Код наряда'] });
-    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Наряд');
-    const fn = `naryad_${order.code}.xlsx`; XLSX.writeFile(wb, fn);
+    const maxEntrances = rows.reduce((m,r)=> Math.max(m, r.qty), 0);
+    const header = ['Город','Улица','Дом','Цвет','Компания','Кол'];
+    for(let i=1;i<=maxEntrances;i++) header.push(String(i));
+    const aoa = [];
+    const totalCols = header.length;
+    aoa.push([`Код наряда: ${order.code}`,...Array(Math.max(totalCols-1,0)).fill('')]);
+    aoa.push([`Компания: ${order.company}`,...Array(Math.max(totalCols-1,0)).fill('')]);
+    aoa.push(header);
+    rows.forEach(r=>{
+      const line = [
+        r.parts.city || '',
+        r.parts.street || r.fallback,
+        r.parts.house || '',
+        '●',
+        order.company,
+        r.qty
+      ];
+      for(let i=1;i<=maxEntrances;i++) line.push(i<=r.qty ? String(i) : '');
+      aoa.push(line);
+    });
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    const lastCol = totalCols - 1;
+    ws['!merges'] = [
+      { s:{r:0,c:0}, e:{r:0,c:lastCol} },
+      { s:{r:1,c:0}, e:{r:1,c:lastCol} }
+    ];
+    ws['!cols'] = [
+      { wch: 16 },
+      { wch: 28 },
+      { wch: 12 },
+      { wch: 10 },
+      { wch: 24 },
+      { wch: 6 },
+      ...Array.from({length:maxEntrances}, ()=> ({ wch:4 }))
+    ];
+    const colorCellCol = 3; // zero-based
+    const startDataRow = 3; // zero-based index in sheet (row4 visually)
+    const hex = String(order.color||'').replace('#','');
+    const rgb = hex.length===3
+      ? hex.split('').map(ch=> ch+ch).join('').toUpperCase()
+      : hex.padEnd(6,'0').slice(0,6).toUpperCase();
+    rows.forEach((_,idx)=>{
+      const addr = XLSX.utils.encode_cell({ r:startDataRow+idx, c:colorCellCol });
+      const cell = ws[addr];
+      if(cell){
+        cell.s = {
+          alignment:{ horizontal:'center', vertical:'center' },
+          font:{ color:{ rgb:'FFFFFFFF' }, bold:true },
+          fill:{ patternType:'solid', fgColor:{ rgb }, bgColor:{ rgb } }
+        };
+        cell.v = '';
+      }
+    });
+    const titleCells = ['A1','A2'];
+    titleCells.forEach(ref=>{
+      if(ws[ref]) ws[ref].s = { font:{ bold:true, sz:14 } };
+    });
+    const headerRowIndex = 2;
+    for(let c=0;c<totalCols;c++){
+      const ref = XLSX.utils.encode_cell({ r:headerRowIndex, c });
+      if(ws[ref]) ws[ref].s = {
+        font:{ bold:true },
+        fill:{ fgColor:{ rgb:'FFECECEC' } },
+        alignment:{ horizontal:'center' }
+      };
+    }
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Наряд');
+    const fn = `naryad_${order.code}.xlsx`;
+    XLSX.writeFile(wb, fn);
+  }
+
+  async function captureOrderMap(order){
+    const group = ensureOrderLayer(order);
+    const wasVisible = map.hasLayer(group);
+    if(!wasVisible){ group.addTo(map); }
+    if(!group || !group.getLayers().length){
+      refreshOrderLayer(order);
+    }
+    if(!group || !group.getLayers().length){
+      throw new Error('Нет домов для карты');
+    }
+    const bounds = group.getBounds();
+    if(!bounds || !bounds.isValid()){
+      throw new Error('Нет валидных границ наряда');
+    }
+    const prevCenter = map.getCenter();
+    const prevZoom = map.getZoom();
+    await new Promise(resolve=>{
+      const finish = ()=>{ map.off('moveend', finish); setTimeout(resolve, 400); };
+      map.once('moveend', finish);
+      map.fitBounds(bounds.pad(0.2));
+    });
+    addBaseLabelsIfZoom();
+    await new Promise(r=> setTimeout(r, 400));
+    if(typeof window.html2canvas !== 'function'){
+      throw new Error('html2canvas недоступен');
+    }
+    const canvas = await window.html2canvas(map.getContainer(), {
+      useCORS:true,
+      backgroundColor:'#ffffff',
+      scale:2
+    });
+    await new Promise((resolve, reject)=>{
+      canvas.toBlob(blob=>{
+        if(!blob){ reject(new Error('Не удалось сформировать изображение карты')); return; }
+        const url = URL.createObjectURL(blob);
+        const a=document.createElement('a');
+        a.href = url;
+        a.download = `naryad_${order.code}_map.png`;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(()=>{
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          resolve();
+        }, 0);
+      }, 'image/png');
+    });
+    map.setView(prevCenter, prevZoom, { animate:false });
+    setTimeout(()=> addBaseLabelsIfZoom(), 100);
+    if(!wasVisible){ map.removeLayer(group); }
+  }
+
+  async function generateOrderPackage(order){
+    if(!order.items.length){
+      alert('Добавьте в наряд хотя бы один адрес.');
+      return;
+    }
+    exportOrderXlsx(order);
+    try{
+      await captureOrderMap(order);
+    }catch(err){
+      console.error(err);
+      alert(err.message||'Не удалось сформировать карту.');
+    }
   }
 
   // Сохранение/загрузка naryad.json
