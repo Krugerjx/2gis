@@ -274,6 +274,27 @@
     street = street.replace(/^(ул\.?|улица|пр\.?|проспект|пер\.?|переулок|бульвар|бул\.?|шоссе|тракт|аллея|площадь|пл\.?|дорога|набережная|наб\.?|мкр\.?|микрорайон)\s*/i,'').trim();
     return { city, street, house: house || extractHouse(base?.title||'') };
   }
+  function extractOrderAddress(base){
+    const parts = splitAddressParts(base);
+    const city = (base?.city ? String(base.city).trim() : '') || parts.city || '';
+    const title = String(base?.title||'');
+    let street = (parts.street || '').trim();
+    let house = (parts.house || extractHouse(title) || '').trim();
+    if(!street){
+      let rest = title;
+      if(city){
+        const cityPattern = new RegExp(`^\s*(?:г\.?\s*)?${city.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}\s*,?\s*`, 'i');
+        rest = rest.replace(cityPattern, '');
+      }
+      if(house){
+        const housePattern = new RegExp(`,?\s*(?:дом|д\.)?\s*${house.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}\s*$`, 'i');
+        rest = rest.replace(housePattern, '');
+      }
+      const candidates = rest.split(',').map(p=>p.trim()).filter(Boolean);
+      street = (candidates[0] || '').trim();
+    }
+    return { city: city.trim(), street, house };
+  }
   function uid(){ return (crypto?.randomUUID?.() || (Date.now().toString(36)+Math.random().toString(36).slice(2,8))); }
   function makeOrderCode(){
     const d=new Date(); const y=d.getFullYear(); const m=String(d.getMonth()+1).padStart(2,'0'); const day=String(d.getDate()).padStart(2,'0');
@@ -1199,7 +1220,7 @@
 
     const div=document.createElement('div');
     div.innerHTML = `
-      <div class="title" style="margin-bottom:6px;">Редактирование: ${esc(order.company)} • <span style="color:${order.color}">●</span> ${order.code}</div>
+      <div class="title" style="margin-bottom:6px;">Редактирование: ${esc(order.company)} • <span id="orderColorDot" style="color:${order.color}">●</span> ${order.code}</div>
       <div class="row" style="margin-bottom:8px;">
         <input id="eCompany" type="text" value="${esc(order.company)}" />
         <input id="eColor" type="color" value="${order.color}" />
@@ -1217,10 +1238,23 @@
       </div>`;
     host.appendChild(div);
 
+    const colorDot = div.querySelector('#orderColorDot');
+    const colorInput = div.querySelector('#eColor');
+    if(colorInput){
+      colorInput.addEventListener('input', (e)=>{
+        const val = e.target.value || order.color;
+        if(colorDot){ colorDot.style.color = val; }
+      });
+    }
+    const companyInput = div.querySelector('#eCompany');
     div.querySelector('#eSave').onclick = ()=>{
-      order.company = div.querySelector('#eCompany').value.trim()||'Без названия';
-      order.color = div.querySelector('#eColor').value||order.color;
-      refreshOrderLayer(order); renderOrdersList(); saveNaryads(true).catch(()=>{});
+      order.company = companyInput ? (companyInput.value.trim()||'Без названия') : 'Без названия';
+      order.color = colorInput && colorInput.value ? colorInput.value : order.color;
+      if(colorDot){ colorDot.style.color = order.color; }
+      refreshOrderLayer(order);
+      renderOrdersList();
+      renderOrderTable(order);
+      saveNaryads(true).catch(()=>{});
     };
     div.querySelector('#eClose').onclick = ()=>{ state.activeOrderId=null; host.style.display='none'; };
     div.querySelector('#eSelectAllInView').onclick = ()=> selectAllBaseInViewIntoOrder(order);
@@ -1241,13 +1275,13 @@
     const tbody=document.createElement('tbody');
     order.items.forEach((it,i)=>{
       const base=state.db.items.find(x=>x.id===it.id); if(!base) return;
-      const parts = splitAddressParts(base);
+      const addr = extractOrderAddress(base);
       const tr=document.createElement('tr');
       tr.innerHTML=`
         <td>${i+1}</td>
-        <td>${esc(parts.city||'')}</td>
-        <td>${esc(parts.street||'')}</td>
-        <td>${esc(parts.house||'')}</td>
+        <td>${esc(addr.city)}</td>
+        <td>${esc(addr.street)}</td>
+        <td>${esc(addr.house)}</td>
         <td><span class="color-dot" style="background:${order.color}"></span></td>
         <td><input type="number" class="qty" min="0" value="${Number(it.qty)||0}" style="width:70px"></td>
         <td><button class="ghost btnRemove">Убрать</button></td>`;
@@ -1358,9 +1392,10 @@
   function exportOrderXlsx(order){
     const rows = order.items.map(it=>{
       const base=state.db.items.find(x=>x.id===it.id);
-      const parts = splitAddressParts(base);
-      return { parts, qty: Number(it.qty)||0, fallback: base? base.title : it.id };
-    });
+      if(!base) return null;
+      const addr = extractOrderAddress(base);
+      return { addr, qty: Number(it.qty)||0, fallback: base.title };
+    }).filter(Boolean);
     const maxEntrances = rows.reduce((m,r)=> Math.max(m, r.qty), 0);
     const header = ['Город','Улица','Дом','Цвет','Компания','Кол'];
     for(let i=1;i<=maxEntrances;i++) header.push(String(i));
@@ -1371,10 +1406,11 @@
     aoa.push(header);
     const colorFill = hexToXlsxRgb(order.color);
     rows.forEach(r=>{
+      const street = r.addr.street || splitAddressParts({ title:r.fallback, city:r.addr.city }).street || r.fallback;
       const line = [
-        r.parts.city || '',
-        r.parts.street || r.fallback,
-        r.parts.house || '',
+        r.addr.city || '',
+        street || '',
+        r.addr.house || '',
         ' ',
         order.company,
         r.qty
