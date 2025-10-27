@@ -274,6 +274,20 @@
   function escapeRegExp(str){
     return String(str||'').replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
   }
+  function stripCityPrefix(value, city){
+    let result = String(value||'').trim();
+    const c = String(city||'').trim();
+    if(!result || !c) return result;
+    const basePattern = () => new RegExp(`^\\s*(?:г\\.?\\s*)?${escapeRegExp(c)}\\s*,?\\s*`, 'i');
+    const trailingPattern = () => new RegExp(`^\\s*${escapeRegExp(c)}\\s*(?:г\\.?|город)\\s*,?\\s*`, 'i');
+    const cityWordPattern = () => new RegExp(`^\\s*город\\s*${escapeRegExp(c)}\\s*,?\\s*`, 'i');
+    let prev;
+    do {
+      prev = result;
+      result = result.replace(basePattern(), '').replace(trailingPattern(), '').replace(cityWordPattern(), '').trim();
+    } while(result !== prev);
+    return result;
+  }
   function splitAddressParts(base){
     const rawParts = String(base?.title||'').split(',').map(p=>p.trim()).filter(Boolean);
     let city = base?.city ? String(base.city).trim() : '';
@@ -296,10 +310,7 @@
     let street = parts.join(', ').trim();
     if(!street && rest && !house){ street = rest; }
     street = street.replace(/^(ул\.?|улица|пр\.?|проспект|пер\.?|переулок|бульвар|бул\.?|шоссе|тракт|аллея|площадь|пл\.?|дорога|набережная|наб\.?|мкр\.?|микрорайон)\s*/i,'').trim();
-    if(street && city){
-      const cityPattern = new RegExp(`^\s*(?:г\.?\s*)?${escapeRegExp(city)}\s*,?\s*`, 'i');
-      street = street.replace(cityPattern, '').trim();
-    }
+    street = stripCityPrefix(street, city);
     return { city, street, house: house || extractHouse(base?.title||'') };
   }
   function extractOrderAddress(base){
@@ -321,10 +332,7 @@
       const candidates = rest.split(',').map(p=>p.trim()).filter(Boolean);
       street = (candidates[0] || '').trim();
     }
-    if(street && city){
-      const cityPattern = new RegExp(`^\s*(?:г\.?\s*)?${escapeRegExp(city)}\s*,?\s*`, 'i');
-      street = street.replace(cityPattern, '').trim();
-    }
+    street = stripCityPrefix(street, city);
     return { city: city.trim(), street, house };
   }
   function uid(){ return (crypto?.randomUUID?.() || (Date.now().toString(36)+Math.random().toString(36).slice(2,8))); }
@@ -1486,10 +1494,7 @@
       if(!street && r.fallback){
         street = String(r.fallback).trim();
       }
-      if(street && city){
-        const cityPattern = new RegExp(`^\s*(?:г\.?\s*)?${escapeRegExp(city)}\s*,?\s*`, 'i');
-        street = street.replace(cityPattern, '').trim();
-      }
+      street = stripCityPrefix(street, city);
       const line = [
         city,
         street || '',
