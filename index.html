@@ -1342,6 +1342,50 @@
       const w=window.open('about:blank','_blank'); w.document.write(html); w.document.close();
     };
   }
+  function colorHexToEmoji(hex){
+    if(!hex) return '⬜';
+    let clean = String(hex).trim();
+    if(!clean) return '⬜';
+    if(clean.startsWith('#')) clean = clean.slice(1);
+    if(!(clean.length===3 || clean.length===6) || /[^0-9a-f]/i.test(clean)) return '⬤';
+    if(clean.length===3) clean = clean.split('').map(ch=> ch+ch).join('');
+    const r = parseInt(clean.slice(0,2),16)/255;
+    const g = parseInt(clean.slice(2,4),16)/255;
+    const b = parseInt(clean.slice(4,6),16)/255;
+    const max = Math.max(r,g,b);
+    const min = Math.min(r,g,b);
+    const diff = max-min;
+    const l = (max+min)/2;
+    if(diff < 1e-4){
+      if(l < 0.2) return '⬛';
+      if(l > 0.85) return '⬜';
+      return '⬜';
+    }
+    const s = diff / (1 - Math.abs(2*l - 1) || 1);
+    if(s < 0.12){
+      if(l < 0.2) return '⬛';
+      if(l > 0.85) return '⬜';
+      return '⬜';
+    }
+    let h = 0;
+    switch(max){
+      case r: h = ((g-b)/diff) % 6; break;
+      case g: h = (b-r)/diff + 2; break;
+      case b: h = (r-g)/diff + 4; break;
+    }
+    h = Math.round(h*60);
+    if(h < 0) h += 360;
+    if(l < 0.12) return '⬛';
+    if(l > 0.9) return '⬜';
+    if(h < 20 || h >= 340) return '🟥';
+    if(h < 50) return '🟧';
+    if(h < 75) return '🟨';
+    if(h < 155) return '🟩';
+    if(h < 210) return '🟦';
+    if(h < 280) return '🟦';
+    return '🟪';
+  }
+
   function exportOrderXlsx(order){
     const rows = order.items.map(it=>{
       const base=state.db.items.find(x=>x.id===it.id);
@@ -1356,16 +1400,17 @@
     aoa.push([`Код наряда: ${order.code}`,...Array(Math.max(totalCols-1,0)).fill('')]);
     aoa.push([`Компания: ${order.company}`,...Array(Math.max(totalCols-1,0)).fill('')]);
     aoa.push(header);
+    const colorChip = colorHexToEmoji(order.color);
     rows.forEach(r=>{
       const line = [
         r.parts.city || '',
         r.parts.street || r.fallback,
         r.parts.house || '',
-        '●',
+        colorChip,
         order.company,
         r.qty
       ];
-      for(let i=1;i<=maxEntrances;i++) line.push(i<=r.qty ? String(i) : '');
+      for(let i=1;i<=maxEntrances;i++) line.push('');
       aoa.push(line);
     });
     const ws = XLSX.utils.aoa_to_sheet(aoa);
@@ -1383,24 +1428,6 @@
       { wch: 6 },
       ...Array.from({length:maxEntrances}, ()=> ({ wch:4 }))
     ];
-    const colorCellCol = 3; // zero-based
-    const startDataRow = 3; // zero-based index in sheet (row4 visually)
-    const hex = String(order.color||'').replace('#','');
-    const rgb = hex.length===3
-      ? hex.split('').map(ch=> ch+ch).join('').toUpperCase()
-      : hex.padEnd(6,'0').slice(0,6).toUpperCase();
-    rows.forEach((_,idx)=>{
-      const addr = XLSX.utils.encode_cell({ r:startDataRow+idx, c:colorCellCol });
-      const cell = ws[addr];
-      if(cell){
-        cell.s = {
-          alignment:{ horizontal:'center', vertical:'center' },
-          font:{ color:{ rgb:'FFFFFFFF' }, bold:true },
-          fill:{ patternType:'solid', fgColor:{ rgb }, bgColor:{ rgb } }
-        };
-        cell.v = '';
-      }
-    });
     const titleCells = ['A1','A2'];
     titleCells.forEach(ref=>{
       if(ws[ref]) ws[ref].s = { font:{ bold:true, sz:14 } };
