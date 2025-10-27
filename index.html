@@ -271,6 +271,9 @@
     const m=s.match(/,\s*([^,]+)\s*$/); if(m) return m[1].replace(/^(дом|д\.)\s*/i,'').trim();
     const m2=s.match(/(\d+[0-9A-Za-zА-Яа-яЁё\/\-]*?)\s*$/); return m2?m2[1]:s;
   }
+  function escapeRegExp(str){
+    return String(str||'').replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+  }
   function splitAddressParts(base){
     const rawParts = String(base?.title||'').split(',').map(p=>p.trim()).filter(Boolean);
     let city = base?.city ? String(base.city).trim() : '';
@@ -281,7 +284,7 @@
     }
     let rest = String(base?.title||'').trim();
     if(city){
-      const cityPattern = new RegExp(`^\s*(?:г\.?\s*)?${city.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}\s*,?\s*`, 'i');
+      const cityPattern = new RegExp(`^\s*(?:г\.?\s*)?${escapeRegExp(city)}\s*,?\s*`, 'i');
       rest = rest.replace(cityPattern, '');
     }
     const parts = rest.split(',').map(p=>p.trim()).filter(Boolean);
@@ -293,6 +296,10 @@
     let street = parts.join(', ').trim();
     if(!street && rest && !house){ street = rest; }
     street = street.replace(/^(ул\.?|улица|пр\.?|проспект|пер\.?|переулок|бульвар|бул\.?|шоссе|тракт|аллея|площадь|пл\.?|дорога|набережная|наб\.?|мкр\.?|микрорайон)\s*/i,'').trim();
+    if(street && city){
+      const cityPattern = new RegExp(`^\s*(?:г\.?\s*)?${escapeRegExp(city)}\s*,?\s*`, 'i');
+      street = street.replace(cityPattern, '').trim();
+    }
     return { city, street, house: house || extractHouse(base?.title||'') };
   }
   function extractOrderAddress(base){
@@ -304,15 +311,19 @@
     if(!street){
       let rest = title;
       if(city){
-        const cityPattern = new RegExp(`^\s*(?:г\.?\s*)?${city.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}\s*,?\s*`, 'i');
+        const cityPattern = new RegExp(`^\s*(?:г\.?\s*)?${escapeRegExp(city)}\s*,?\s*`, 'i');
         rest = rest.replace(cityPattern, '');
       }
       if(house){
-        const housePattern = new RegExp(`,?\s*(?:дом|д\.)?\s*${house.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}\s*$`, 'i');
+        const housePattern = new RegExp(`,?\s*(?:дом|д\.)?\s*${escapeRegExp(house)}\s*$`, 'i');
         rest = rest.replace(housePattern, '');
       }
       const candidates = rest.split(',').map(p=>p.trim()).filter(Boolean);
       street = (candidates[0] || '').trim();
+    }
+    if(street && city){
+      const cityPattern = new RegExp(`^\s*(?:г\.?\s*)?${escapeRegExp(city)}\s*,?\s*`, 'i');
+      street = street.replace(cityPattern, '').trim();
     }
     return { city: city.trim(), street, house };
   }
@@ -1430,7 +1441,8 @@
       const base = state.db.items.find(x=>x.id===it.id);
       if(!base) return null;
       const addr = extractOrderAddress(base);
-      return { addr, qty: Number(it.qty)||0, fallback: base.title };
+      const parts = splitAddressParts(base);
+      return { addr, qty: Number(it.qty)||0, fallback: base.title, parts };
     }).filter(Boolean);
     const maxEntrances = rows.reduce((m,r)=> Math.max(m, r.qty), 0);
     const header = ['Город','Улица','Дом','Цвет','Компания','Кол'];
@@ -1462,9 +1474,24 @@
     });
 
     rows.forEach(r=>{
-      const street = r.addr.street || splitAddressParts({ title:r.fallback, city:r.addr.city }).street || r.fallback;
+      const city = r.addr.city || '';
+      let street = (r.addr.street || '').trim();
+      if(!street){
+        street = (r.parts?.street || '').trim();
+      }
+      if(!street){
+        const fallbackParts = splitAddressParts({ title:r.fallback, city });
+        street = (fallbackParts.street || '').trim();
+      }
+      if(!street && r.fallback){
+        street = String(r.fallback).trim();
+      }
+      if(street && city){
+        const cityPattern = new RegExp(`^\s*(?:г\.?\s*)?${escapeRegExp(city)}\s*,?\s*`, 'i');
+        street = street.replace(cityPattern, '').trim();
+      }
       const line = [
-        r.addr.city || '',
+        city,
         street || '',
         r.addr.house || '',
         ' ',
