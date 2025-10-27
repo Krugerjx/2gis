@@ -310,6 +310,24 @@
     }
     throw new Error(`Unexpected GitHub response for ${path}`);
   }
+  async function ghLoadWithRawFallback(spec, {missingValue}={}){
+    const rawUrl = `https://raw.githubusercontent.com/${spec.repo}/${spec.branch}/${spec.path}`;
+    let lastErr = null;
+    try{
+      return await loadJsonNoCache(rawUrl);
+    }catch(err){
+      lastErr = err;
+      if(spec.token){
+        try{
+          return await ghDownloadJson(spec);
+        }catch(err2){
+          lastErr = err2;
+        }
+      }
+    }
+    if(missingValue && /404/.test(lastErr?.message||'')) return missingValue;
+    throw lastErr;
+  }
 
   // --- База: слои и видимость
   function ensureBaseLayer(it){
@@ -1488,17 +1506,11 @@
 
     try{
       const dbPromise = state.ghDb
-        ? (state.ghDb.token
-            ? ghDownloadJson(state.ghDb)
-            : loadJsonNoCache(`https://raw.githubusercontent.com/${state.ghDb.repo}/${state.ghDb.branch}/${state.ghDb.path}`)
-          )
+        ? ghLoadWithRawFallback(state.ghDb)
         : loadJsonNoCache(new URL('database.json', location.href).toString());
 
       const nrdPromise = state.ghNrd
-        ? (state.ghNrd.token
-            ? ghDownloadJson(state.ghNrd)
-            : loadJsonNoCache(`https://raw.githubusercontent.com/${state.ghNrd.repo}/${state.ghNrd.branch}/${state.ghNrd.path}`).catch(_=> ({orders: []}))
-          )
+        ? ghLoadWithRawFallback(state.ghNrd, {missingValue:{orders: []}})
         : loadJsonNoCache(new URL('naryad.json', location.href).toString()).catch(_=> ({orders: []}));
 
       const [db, nrd] = await Promise.all([
