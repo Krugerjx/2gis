@@ -237,25 +237,6 @@
     return toHex(value) || fallbackHex;
   }
 
-  function hexToRgbComponents(hex){
-    const normalized = normalizeHexColor(hex, DEFAULT_ORDER_COLOR);
-    const match = /^#([0-9A-F]{6})$/i.exec(normalized);
-    if(!match){
-      return { r: 0, g: 0, b: 0 };
-    }
-    const num = parseInt(match[1], 16);
-    return {
-      r: (num >> 16) & 0xFF,
-      g: (num >> 8) & 0xFF,
-      b: num & 0xFF
-    };
-  }
-
-  function hexToRgba(hex, alpha){
-    const { r, g, b } = hexToRgbComponents(hex);
-    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-  }
-
   // --- Карта
   let baseTileLayer = null;
 
@@ -332,122 +313,6 @@
   };
 
   // --- Helpers
-  function hideOrderPanesForSnapshot(){
-    if(!map || typeof map.getPanes !== 'function'){
-      return ()=>{};
-    }
-    const panes = map.getPanes();
-    const names = ['overlayPane','markerPane','tooltipPane','popupPane','shadowPane'];
-    const states = [];
-    names.forEach(name=>{
-      const pane = panes?.[name];
-      if(!pane) return;
-      states.push([pane, pane.style.opacity]);
-      pane.style.opacity = '0';
-    });
-    return ()=>{
-      states.forEach(([pane, opacity])=>{
-        pane.style.opacity = opacity;
-      });
-    };
-  }
-
-  function drawRoundedRect(ctx, x, y, width, height, radius, { fill, stroke, lineWidth } = {}){
-    const r = Math.max(0, Math.min(radius || 0, Math.min(width, height) / 2));
-    ctx.beginPath();
-    ctx.moveTo(x + r, y);
-    ctx.lineTo(x + width - r, y);
-    ctx.quadraticCurveTo(x + width, y, x + width, y + r);
-    ctx.lineTo(x + width, y + height - r);
-    ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
-    ctx.lineTo(x + r, y + height);
-    ctx.quadraticCurveTo(x, y + height, x, y + height - r);
-    ctx.lineTo(x, y + r);
-    ctx.quadraticCurveTo(x, y, x + r, y);
-    ctx.closePath();
-    if(fill){
-      ctx.fillStyle = fill;
-      ctx.fill();
-    }
-    if(stroke){
-      ctx.strokeStyle = stroke;
-      ctx.lineWidth = lineWidth || 1;
-      ctx.stroke();
-    }
-  }
-
-  function drawOrderOverlaysOnCanvas(mapCanvas, orders){
-    if(!mapCanvas || !orders?.length) return;
-    const ctx = mapCanvas.getContext('2d');
-    if(!ctx) return;
-    const size = map.getSize();
-    if(!size || !size.x || !size.y) return;
-    const scaleX = mapCanvas.width / size.x;
-    const scaleY = mapCanvas.height / size.y;
-    const scale = Math.max(scaleX, scaleY);
-    orders.forEach(order=>{
-      const colorHex = normalizeHexColor(order.color, DEFAULT_ORDER_COLOR);
-      const fillColor = hexToRgba(colorHex, 0.78);
-      const strokeColor = colorHex;
-      (order.items||[]).forEach(item=>{
-        const baseItem = state.db.items.find(x=>x.id===item.id);
-        if(!baseItem || !Array.isArray(baseItem.polygon) || baseItem.polygon.length<3) return;
-        const latlngs = ringLonLat_to_LatLng(baseItem.polygon).map(([lat, lon])=> L.latLng(lat, lon));
-        const projected = latlngs.map(ll=> map.latLngToContainerPoint(ll));
-        if(projected.length<3) return;
-        ctx.beginPath();
-        projected.forEach((pt, idx)=>{
-          const x = pt.x * scaleX;
-          const y = pt.y * scaleY;
-          if(idx===0){ ctx.moveTo(x, y); }
-          else { ctx.lineTo(x, y); }
-        });
-        ctx.closePath();
-        ctx.fillStyle = fillColor;
-        ctx.strokeStyle = strokeColor;
-        ctx.lineWidth = Math.max(2.4 * scale, 1.2);
-        ctx.fill();
-        ctx.stroke();
-
-        let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
-        latlngs.forEach(ll=>{
-          if(ll.lat < minLat) minLat = ll.lat;
-          if(ll.lat > maxLat) maxLat = ll.lat;
-          if(ll.lng < minLng) minLng = ll.lng;
-          if(ll.lng > maxLng) maxLng = ll.lng;
-        });
-        const centerLat = (minLat + maxLat) / 2;
-        const centerLng = (minLng + maxLng) / 2;
-        const centerPt = map.latLngToContainerPoint(L.latLng(centerLat, centerLng));
-        const label = extractHouse(baseItem.title);
-        if(label){
-          const x = centerPt.x * scaleX;
-          const y = centerPt.y * scaleY;
-          const fontSize = 12 * scale;
-          ctx.font = `${fontSize}px "Inter","Segoe UI",sans-serif`;
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          const paddingX = 6 * scale;
-          const paddingY = 4 * scale;
-          const metrics = ctx.measureText(label);
-          const textWidth = metrics.width;
-          const boxWidth = textWidth + paddingX * 2;
-          const boxHeight = fontSize + paddingY * 2;
-          const rectX = x - boxWidth/2;
-          const rectY = y - boxHeight/2;
-          const radius = 4 * scale;
-          drawRoundedRect(ctx, rectX, rectY, boxWidth, boxHeight, radius, {
-            fill: 'rgba(255, 255, 255, 0.95)',
-            stroke: strokeColor,
-            lineWidth: Math.max(1.4 * scale, 1)
-          });
-          ctx.fillStyle = strokeColor;
-          ctx.fillText(label, x, y);
-        }
-      });
-    });
-  }
-
   const esc = s => String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   const norm = s => String(s||'').toLowerCase().replaceAll('ё','е').trim();
   const ringLonLat_to_LatLng = ring => ring.map(([x,y])=>[y,x]);
@@ -1847,23 +1712,15 @@
 
     await waitForTileLayerReady(baseTileLayer);
 
-    let mapCanvas = null;
-    const restorePanes = hideOrderPanesForSnapshot();
-    try{
-      mapCanvas = await window.html2canvas(map.getContainer(), {
-        useCORS:true,
-        backgroundColor:'#ffffff',
-        scale:2
-      });
-    }finally{
-      restorePanes();
-    }
+    const mapCanvas = await window.html2canvas(map.getContainer(), {
+      useCORS:true,
+      backgroundColor:'#ffffff',
+      scale:2
+    });
 
     if(!mapCanvas){
       throw new Error('Не удалось создать изображение карты.');
     }
-
-    drawOrderOverlaysOnCanvas(mapCanvas, activeOrders);
 
     const now = new Date();
     const headerText = `Активные наряды (${activeOrders.length})`;
@@ -1975,23 +1832,16 @@
     }
     await waitForTileLayerReady(baseTileLayer);
 
-    let canvas = null;
-    const restorePanes = hideOrderPanesForSnapshot();
-    try{
-      canvas = await window.html2canvas(map.getContainer(), {
-        useCORS:true,
-        backgroundColor:'#ffffff',
-        scale:2
-      });
-    }finally{
-      restorePanes();
-    }
+    const canvas = await window.html2canvas(map.getContainer(), {
+      useCORS:true,
+      backgroundColor:'#ffffff',
+      scale:2
+    });
 
     if(!canvas){
       throw new Error('Не удалось создать изображение карты.');
     }
 
-    drawOrderOverlaysOnCanvas(canvas, [order]);
     await new Promise((resolve, reject)=>{
       canvas.toBlob(blob=>{
         if(!blob){ reject(new Error('Не удалось сформировать изображение карты')); return; }
