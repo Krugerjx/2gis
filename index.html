@@ -144,10 +144,14 @@
         <div class="title">Собранные наряды</div>
         <div class="row">
           <button id="btnAddManual" class="ghost">+ Новый (вручную)</button>
-          <button id="btnSaveNaryad" class="ghost">Сохранить naryad.json</button>
-          <input id="naryadLoad" type="file" accept=".json" style="display:none;" />
-          <button id="btnLoadNaryad" class="ghost">Загрузить</button>
+          <button id="btnOrdersShowAll" class="ghost">Показать все на карте</button>
+          <button id="btnOrdersHideAll" class="ghost">Скрыть все с карты</button>
         </div>
+      </div>
+      <div class="row" style="margin-top:6px; gap:6px; flex-wrap:wrap;">
+        <button id="btnSaveNaryad" class="ghost">Сохранить naryad.json</button>
+        <input id="naryadLoad" type="file" accept=".json" style="display:none;" />
+        <button id="btnLoadNaryad" class="ghost">Загрузить</button>
       </div>
       <div id="ordersList" class="list" style="margin-top:8px;"></div>
     </div>
@@ -231,6 +235,8 @@
   const btnBaseShow = $('btnBaseShow');
   const btnBaseHide = $('btnBaseHide');
   const quickCityFilters = $('quickCityFilters');
+  const btnOrdersShowAll = $('btnOrdersShowAll');
+  const btnOrdersHideAll = $('btnOrdersHideAll');
 
   // --- Состояние
   const state = {
@@ -846,6 +852,7 @@
     host.innerHTML = '';
     if(!state.orders.length){
       host.innerHTML = '<div class="muted">Пока нет нарядов.</div>';
+      updateOrdersMapButtons();
       return;
     }
     state.orders
@@ -858,7 +865,8 @@
         const div=document.createElement('div');
         div.className='item'+(state.activeOrderId===order.id?' active':'');
         div.dataset.id=order.id;
-        const vis = map.hasLayer(ensureOrderLayer(order)) ? 'checked' : '';
+        const group = ensureOrderLayer(order);
+        const vis = group && map.hasLayer(group) ? 'checked' : '';
         div.innerHTML = `
           <label class="vis"><input type="checkbox" class="visOrder" ${vis} /></label>
           <div>
@@ -866,23 +874,48 @@
             <div class="muted">Адресов: ${order.items.length} • Кол всего: ${total}</div>
           </div>
           <div class="act">
-            <button class="ghost btnEdit">Редактировать</button>
-            <button class="ghost btnFit">Показать</button>
-            <button class="danger btnDel">Удалить</button>
+            <button class="ghost btnGenerate" title="Сформировать наряд">📄</button>
+            <button class="ghost btnEdit" title="Редактировать">✏️</button>
+            <button class="ghost btnFit" title="Показать на карте">Показать</button>
+            <button class="ghost btnDel" title="Удалить">🗑️</button>
           </div>`;
         div.querySelector('.visOrder').onchange = (e)=>{
           const g=ensureOrderLayer(order);
-          if(e.target.checked){ g.addTo(map); } else { map.removeLayer(g); }
+          if(e.target.checked){
+            if(g && !map.hasLayer(g)) g.addTo(map);
+          } else {
+            if(g && map.hasLayer(g)) map.removeLayer(g);
+          }
+          updateOrdersMapButtons();
         };
         div.querySelector('.btnFit').onclick = ()=>{
           const g=ensureOrderLayer(order);
           if(g && g.getBounds && g.getLayers().length){ map.fitBounds(g.getBounds().pad(0.2)); }
           addBaseLabelsIfZoom();
         };
+        div.querySelector('.btnGenerate').onclick = ()=> generateOrderPackage(order);
         div.querySelector('.btnEdit').onclick = ()=> openOrderEditor(order.id);
         div.querySelector('.btnDel').onclick = ()=> deleteOrder(order.id);
         host.appendChild(div);
       });
+    updateOrdersMapButtons();
+  }
+
+  function updateOrdersMapButtons(){
+    if(btnOrdersShowAll){
+      const anyHidden = state.orders.some(order=>{
+        const group = state.orderLayers.get(order.id);
+        return !(group && map.hasLayer(group));
+      });
+      btnOrdersShowAll.disabled = !anyHidden;
+    }
+    if(btnOrdersHideAll){
+      const anyVisible = state.orders.some(order=>{
+        const group = state.orderLayers.get(order.id);
+        return !!(group && map.hasLayer(group));
+      });
+      btnOrdersHideAll.disabled = !anyVisible;
+    }
   }
 
   // Загрузка XLSX/CSV (кнопки в разметке уже есть)
@@ -1399,6 +1432,29 @@
     state.orders.push(order);
     refreshOrderLayer(order); renderOrdersList(); openOrderEditor(order.id); saveNaryads(true).catch(()=>{});
   };
+
+  if(btnOrdersShowAll){
+    btnOrdersShowAll.onclick = ()=>{
+      state.orders.forEach(order=>{
+        const group = ensureOrderLayer(order);
+        if(group && !group.getLayers().length){ refreshOrderLayer(order); }
+        if(group && !map.hasLayer(group)){ group.addTo(map); }
+      });
+      renderOrdersList();
+    };
+  }
+
+  if(btnOrdersHideAll){
+    btnOrdersHideAll.onclick = ()=>{
+      state.orders.forEach(order=>{
+        const group = state.orderLayers.get(order.id);
+        if(group && map.hasLayer(group)){ map.removeLayer(group); }
+      });
+      renderOrdersList();
+    };
+  }
+
+  updateOrdersMapButtons();
 
   function deleteOrder(orderId){
     const order=state.orders.find(x=>x.id===orderId); if(!order) return;
