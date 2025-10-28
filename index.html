@@ -33,6 +33,15 @@
     button.danger { background:#fee2e2; border-color:#fecaca; color:#991b1b; }
     .badge { font-size:12px; padding:2px 6px; border-radius:999px; background:#f1f5f9; border:1px solid #e5e7eb; }
 
+    .order-action-buttons { gap:6px; }
+    .icon-btn { padding:6px; width:34px; height:34px; display:flex; align-items:center; justify-content:center; }
+    .icon-btn svg { width:18px; height:18px; }
+    .icon-btn:disabled { opacity:.5; cursor:default; }
+    #btnOrderAdd.active { background:#111827; color:#fff; border-color:#111827; }
+    .order-create { margin-top:10px; padding-top:10px; border-top:1px dashed #e2e8f0; display:none; }
+    .order-create.open { display:block; }
+    .order-upload { margin-top:10px; background:#ffffff; border:1px dashed #e2e8f0; border-radius:12px; padding:12px; }
+
     .list { display:flex; flex-direction:column; gap:6px; }
     .item { padding:8px 10px; border:1px dashed #ddd; border-radius:10px; display:grid; grid-template-columns:auto 1fr auto; gap:8px; align-items:center; }
     .item.active { background:#fff6e5; outline: 1px solid #fbbf24; }
@@ -113,46 +122,51 @@
       <div id="suggestBox" class="suggest" style="display:none;"></div>
     </div>
 
-    <!-- 🗂 Загрузка таблицы клиента → Наряд (поднято выше базы) -->
-    <div class="panel">
-      <div class="title">Загрузка таблицы клиента (XLSX/CSV) → Наряд</div>
-      <div class="hint" style="margin-top:6px;">Ожидаются столбцы: <b>Адрес</b> или связка <b>Нас. пункт</b> + <b>Улица</b> + <b>Дом</b>, а также <b>Кол</b>.</div>
-      <div class="row" style="margin-top:8px;">
-        <input id="fileInput" type="file" accept=".xlsx,.xls,.csv" />
-        <button id="btnClearUpload" class="ghost">Очистить</button>
-      </div>
-      <div id="uploadStats" class="muted" style="margin-top:6px;"></div>
-      <div id="matchTableWrap" style="margin-top:8px; display:none;">
-        <div class="row" style="justify-content:space-between; align-items:center;">
-          <div class="label">Совпадения адресов с базой</div>
-          <div class="row">
-            <input id="companyInput" type="text" placeholder="Название компании" />
-            <input id="colorInput" type="color" value="#e11d48" title="Цвет" />
-            <button id="btnCreateOrder" class="primary">Создать наряд</button>
-          </div>
-        </div>
-        <div class="hint" style="margin-top:6px;">Красные строки — адрес не найден. Зелёные — будет добавлен в наряд.</div>
-        <div style="max-height:220px; overflow:auto; margin-top:8px;">
-          <table id="matchTable"></table>
-        </div>
-      </div>
-    </div>
-
     <!-- 📦 Собранные наряды -->
     <div class="panel">
       <div class="row" style="justify-content:space-between; align-items:center;">
         <div class="title">Собранные наряды</div>
-        <div class="row">
-          <button id="btnAddManual" class="ghost">+ Новый (вручную)</button>
-          <button id="btnOrdersShowAll" class="ghost">Показать все на карте</button>
-          <button id="btnOrdersHideAll" class="ghost">Скрыть все с карты</button>
-          <button id="btnOrdersScreenshot" class="ghost">Скрин карты</button>
+        <div class="row order-action-buttons">
+          <button id="btnOrderAdd" class="ghost">Добавить наряд</button>
+          <button id="btnOrdersShowAll" class="ghost icon-btn" title="Показать все на карте" aria-label="Показать все на карте">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3.2"/></svg>
+          </button>
+          <button id="btnOrdersHideAll" class="ghost icon-btn" title="Скрыть все с карты" aria-label="Скрыть все с карты">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 6.15A10.74 10.74 0 0 1 12 5c7 0 11 7 11 7a17.93 17.93 0 0 1-3.47 4.5"/><path d="M6.53 6.53A17.81 17.81 0 0 0 1 12s4 7 11 7a11.36 11.36 0 0 0 2-.17"/><path d="M9.5 9.5a3.2 3.2 0 0 0 4.5 4.5"/></svg>
+          </button>
+          <button id="btnOrdersScreenshot" class="ghost icon-btn" title="Скрин карты" aria-label="Скрин карты">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><rect x="7" y="7" width="10" height="10" rx="2"/></svg>
+          </button>
         </div>
       </div>
-      <div class="row" style="margin-top:6px; gap:6px; flex-wrap:wrap;">
-        <button id="btnSaveNaryad" class="ghost">Сохранить naryad.json</button>
-        <input id="naryadLoad" type="file" accept=".json" style="display:none;" />
-        <button id="btnLoadNaryad" class="ghost">Загрузить</button>
+      <input id="naryadLoad" type="file" accept=".json" style="display:none;" />
+      <div id="orderCreateSection" class="order-create">
+        <div class="row" style="gap:8px; flex-wrap:wrap;">
+          <button id="btnAddManual" class="ghost">Создать вручную</button>
+        </div>
+        <div class="order-upload">
+          <div class="label" style="font-size:13px; font-weight:600;">Загрузка таблицы клиента (XLSX/CSV) → Наряд</div>
+          <div class="hint" style="margin-top:6px;">Ожидаются столбцы: <b>Адрес</b> или связка <b>Нас. пункт</b> + <b>Улица</b> + <b>Дом</b>, а также <b>Кол</b>.</div>
+          <div class="row" style="margin-top:8px;">
+            <input id="fileInput" type="file" accept=".xlsx,.xls,.csv" />
+            <button id="btnClearUpload" class="ghost">Очистить</button>
+          </div>
+          <div id="uploadStats" class="muted" style="margin-top:6px;"></div>
+          <div id="matchTableWrap" style="margin-top:8px; display:none;">
+            <div class="row" style="justify-content:space-between; align-items:center;">
+              <div class="label">Совпадения адресов с базой</div>
+              <div class="row">
+                <input id="companyInput" type="text" placeholder="Название компании" />
+                <input id="colorInput" type="color" value="#e11d48" title="Цвет" />
+                <button id="btnCreateOrder" class="primary">Создать наряд</button>
+              </div>
+            </div>
+            <div class="hint" style="margin-top:6px;">Красные строки — адрес не найден. Зелёные — будет добавлен в наряд.</div>
+            <div style="max-height:220px; overflow:auto; margin-top:8px;">
+              <table id="matchTable"></table>
+            </div>
+          </div>
+        </div>
       </div>
       <div id="ordersList" class="list" style="margin-top:8px;"></div>
     </div>
@@ -241,6 +255,34 @@
   const btnOrdersShowAll = $('btnOrdersShowAll');
   const btnOrdersHideAll = $('btnOrdersHideAll');
   const btnOrdersScreenshot = $('btnOrdersScreenshot');
+  const btnOrderAdd = $('btnOrderAdd');
+  const orderCreateSection = $('orderCreateSection');
+  const naryadLoad = $('naryadLoad');
+  const addOrderDefaultLabel = btnOrderAdd ? btnOrderAdd.textContent.trim() : 'Добавить наряд';
+
+  function setOrderCreateOpen(open){
+    if(orderCreateSection){
+      if(open){
+        orderCreateSection.classList.add('open');
+      } else {
+        orderCreateSection.classList.remove('open');
+      }
+    }
+    if(btnOrderAdd){
+      if(open){
+        btnOrderAdd.classList.add('active');
+      } else {
+        btnOrderAdd.classList.remove('active');
+      }
+      btnOrderAdd.textContent = open ? 'Свернуть' : addOrderDefaultLabel;
+    }
+  }
+
+  function ensureOrderCreateOpen(){
+    if(orderCreateSection && !orderCreateSection.classList.contains('open')){
+      setOrderCreateOpen(true);
+    }
+  }
 
   // --- Состояние
   const state = {
@@ -1171,6 +1213,7 @@
 
   async function handleFile(){
     const file = fileInput.files?.[0]; if(!file) return;
+    ensureOrderCreateOpen();
     const buf = await file.arrayBuffer();
     let table = [];
     if(/\.csv$/i.test(file.name)){
@@ -1252,6 +1295,7 @@
   }
 
   function renderMatchTable(){
+    ensureOrderCreateOpen();
     matchTableWrap.style.display='';
     matchTable.innerHTML = '';
     const thead = document.createElement('thead');
@@ -1431,6 +1475,19 @@
   }
 
   // Создание пустого наряда вручную
+  if(btnOrderAdd){
+    btnOrderAdd.onclick = ()=>{
+      const willOpen = !(orderCreateSection && orderCreateSection.classList.contains('open'));
+      setOrderCreateOpen(willOpen);
+      if(willOpen){
+        const manualBtn = $('btnAddManual');
+        if(manualBtn){
+          manualBtn.focus();
+        }
+      }
+    };
+  }
+
   $('btnAddManual').onclick = ()=>{
     const order={ id:uid(), code:makeOrderCode(), company:'Новый заказчик', color: normalizeHexColor(DEFAULT_ORDER_COLOR, DEFAULT_ORDER_COLOR), items:[], created_at:new Date().toISOString() };
     state.orders.push(order);
@@ -1816,37 +1873,45 @@
   }
 
   // Сохранение/загрузка naryad.json
-  $('btnSaveNaryad').onclick = async ()=>{
-    try{
-      if(!state.ghNrd && !state.naryadFsHandle && window.showSaveFilePicker){
-        const handle = await pickNaryadHandleForSave();
-        if(!handle) return;
+  const btnSaveNaryad = $('btnSaveNaryad');
+  if(btnSaveNaryad){
+    btnSaveNaryad.onclick = async ()=>{
+      try{
+        if(!state.ghNrd && !state.naryadFsHandle && window.showSaveFilePicker){
+          const handle = await pickNaryadHandleForSave();
+          if(!handle) return;
+        }
+        await saveNaryads();
+        if(state.activeOrderId){
+          state.activeOrderId = null;
+          const panel = $('orderEditPanel');
+          if(panel){ panel.style.display = 'none'; }
+          renderOrdersList();
+        }
+      }catch(err){
+        alert('Ошибка сохранения: '+(err?.message || err));
       }
-      await saveNaryads();
-      if(state.activeOrderId){
-        state.activeOrderId = null;
-        const panel = $('orderEditPanel');
-        if(panel){ panel.style.display = 'none'; }
-        renderOrdersList();
-      }
-    }catch(err){
-      alert('Ошибка сохранения: '+(err?.message || err));
-    }
-  };
-  $('btnLoadNaryad').onclick = async ()=>{
-    const handled = await tryLoadNaryadViaPicker();
-    if(!handled) $('naryadLoad').click();
-  };
-  $('naryadLoad').addEventListener('change', async (e)=>{
-    const f=e.target.files?.[0]; if(!f) return;
-    const txt=await f.text();
-    try{
-      const j=JSON.parse(txt);
-      state.naryadFsHandle = null;
-      loadNaryadsFromObject(j);
-      alert('Наряды загружены.');
-    }catch(err){ alert('Ошибка JSON: '+err.message); }
-  });
+    };
+  }
+  const btnLoadNaryad = $('btnLoadNaryad');
+  if(btnLoadNaryad){
+    btnLoadNaryad.onclick = async ()=>{
+      const handled = await tryLoadNaryadViaPicker();
+      if(!handled && naryadLoad) naryadLoad.click();
+    };
+  }
+  if(naryadLoad){
+    naryadLoad.addEventListener('change', async (e)=>{
+      const f=e.target.files?.[0]; if(!f) return;
+      const txt=await f.text();
+      try{
+        const j=JSON.parse(txt);
+        state.naryadFsHandle = null;
+        loadNaryadsFromObject(j);
+        alert('Наряды загружены.');
+      }catch(err){ alert('Ошибка JSON: '+err.message); }
+    });
+  }
 
   function getNaryadsObject(){ return { version:1, updated_at: new Date().toISOString(), orders: state.orders }; }
   function loadNaryadsFromObject(obj){
