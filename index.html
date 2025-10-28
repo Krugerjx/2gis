@@ -224,8 +224,10 @@
   }
 
   // --- Карта
+  let baseTileLayer = null;
+
   const map = L.map('map').setView([51.533, 46.033], 12);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+  baseTileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
     maxZoom:20,
     attribution:'&copy; OpenStreetMap contributors',
     crossOrigin:'anonymous'
@@ -1597,6 +1599,47 @@
       URL.revokeObjectURL(url);
     }, 0);
   }
+  function waitForTileLayerReady(tileLayer, timeout = 8000){
+    return new Promise(resolve=>{
+      if(!tileLayer || !tileLayer._tiles){
+        resolve();
+        return;
+      }
+      const finalize = ()=>{
+        tileLayer.off('load', handleChange);
+        tileLayer.off('tileerror', handleChange);
+        clearTimeout(timer);
+        resolve();
+      };
+      const checkReady = ()=>{
+        const tiles = tileLayer._tiles;
+        if(!tiles){
+          finalize();
+          return;
+        }
+        const keys = Object.keys(tiles);
+        if(!keys.length){
+          return;
+        }
+        const allReady = keys.every(key=>{
+          const tile = tiles[key];
+          return tile && tile.loaded;
+        });
+        if(allReady){
+          finalize();
+        }
+      };
+      const handleChange = ()=>{
+        checkReady();
+      };
+      const timer = setTimeout(()=>{
+        finalize();
+      }, timeout);
+      tileLayer.on('load', handleChange);
+      tileLayer.on('tileerror', handleChange);
+      checkReady();
+    });
+  }
 
   async function captureActiveOrdersScreenshot(){
     if(typeof window.html2canvas !== 'function'){
@@ -1609,6 +1652,8 @@
     if(!activeOrders.length){
       throw new Error('Нет активных нарядов на карте.');
     }
+
+    await waitForTileLayerReady(baseTileLayer);
 
     const mapCanvas = await window.html2canvas(map.getContainer(), {
       useCORS:true,
