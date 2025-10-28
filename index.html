@@ -387,8 +387,8 @@
     const scale = Math.max(scaleX, scaleY);
     orders.forEach(order=>{
       const colorHex = normalizeHexColor(order.color, DEFAULT_ORDER_COLOR);
-      const fillColor = hexToRgba(colorHex, 0.28);
-      const strokeColor = hexToRgba(colorHex, 0.85);
+      const fillColor = hexToRgba(colorHex, 0.78);
+      const strokeColor = colorHex;
       (order.items||[]).forEach(item=>{
         const baseItem = state.db.items.find(x=>x.id===item.id);
         if(!baseItem || !Array.isArray(baseItem.polygon) || baseItem.polygon.length<3) return;
@@ -405,7 +405,7 @@
         ctx.closePath();
         ctx.fillStyle = fillColor;
         ctx.strokeStyle = strokeColor;
-        ctx.lineWidth = Math.max(2 * scale, 1);
+        ctx.lineWidth = Math.max(2.4 * scale, 1.2);
         ctx.fill();
         ctx.stroke();
 
@@ -437,9 +437,9 @@
           const rectY = y - boxHeight/2;
           const radius = 4 * scale;
           drawRoundedRect(ctx, rectX, rectY, boxWidth, boxHeight, radius, {
-            fill: 'rgba(255, 255, 255, 0.92)',
+            fill: 'rgba(255, 255, 255, 0.95)',
             stroke: strokeColor,
-            lineWidth: Math.max(1.2 * scale, 0.8)
+            lineWidth: Math.max(1.4 * scale, 1)
           });
           ctx.fillStyle = strokeColor;
           ctx.fillText(label, x, y);
