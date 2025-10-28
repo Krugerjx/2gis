@@ -16,9 +16,16 @@
   <script src="https://cdn.jsdelivr.net/npm/exceljs@4.3.0/dist/exceljs.min.js"></script>
 
   <style>
+    :root { --sidebar-width: 560px; }
     html, body { height:100%; margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; }
-    #app { display:grid; grid-template-columns: 560px 1fr; height:100%; }
-    #sidebar { padding:14px; border-right:1px solid #eee; overflow:auto; }
+    body { position:relative; }
+    #app { display:grid; grid-template-columns: var(--sidebar-width) 1fr; height:100%; transition: grid-template-columns .28s ease; }
+    #sidebar { padding:14px; border-right:1px solid #eee; overflow:auto; transition: opacity .28s ease; min-width:0; }
+    body.sidebar-collapsed #app { grid-template-columns: 0 1fr; }
+    body.sidebar-collapsed #sidebar { opacity:0; pointer-events:none; border-right:none; }
+    .sidebar-toggle { position:fixed; top:16px; left:calc(16px + var(--sidebar-width)); z-index:1200; padding:6px; border-radius:50%; border:1px solid #d0d5dd; background:#fff; box-shadow:0 10px 30px rgba(15,23,42,.08); width:38px; height:38px; display:flex; align-items:center; justify-content:center; cursor:pointer; }
+    body.sidebar-collapsed .sidebar-toggle { left:16px; }
+    .sidebar-toggle svg { width:18px; height:18px; }
     #map { width:100%; height:100%; }
 
     .title { font-weight:700; }
@@ -74,7 +81,7 @@
     .vis input { width:16px; height:16px; }
 
     /* Принт */
-    @media print { #sidebar { display:none; } #app { grid-template-columns: 1fr; } }
+    @media print { #sidebar { display:none; } #app { grid-template-columns: 1fr; } .sidebar-toggle { display:none; } }
 
     /* Поиск */
     .tabs { display:flex; gap:6px; }
@@ -95,12 +102,17 @@
     .inline-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:6px; }
     .inline-footer { display:flex; align-items:center; gap:8px; margin-top:8px; }
 
-    .base-bar { gap:8px; }
-    .base-bar button { flex:0 0 auto; }
     #quickCityFilters .chip { margin-top:0; }
+    .base-header { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+    .base-header-left { display:flex; align-items:center; gap:6px; }
+    #basePanelBody { margin-top:10px; }
+    #basePanelBody.hidden { display:none; }
   </style>
 </head>
 <body>
+<button id="sidebarToggle" class="sidebar-toggle" title="Скрыть меню" aria-label="Скрыть меню">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/><path d="M19 5v14"/></svg>
+</button>
 <div id="app">
   <div id="sidebar">
 
@@ -178,34 +190,32 @@
     <div class="panel" id="orderEditPanel" style="display:none;"></div>
 
 
-    <!-- ⚙️ Управление базой -->
-    <div class="panel" id="baseControlsPanel">
-      <div class="label" style="margin-bottom:6px;">Управление базой</div>
-      <div class="row base-bar" style="align-items:flex-start;">
-        <button id="btnBasePanelToggle" class="ghost">Свернуть список</button>
-        <button id="btnBaseShow" class="ghost">Показать адреса на карте</button>
-        <button id="btnBaseHide" class="ghost">Скрыть адреса на карте</button>
-        <div id="quickCityFilters" class="chips" style="margin:0;">
-          <span class="chip" data-city="саратов">Саратов</span>
-          <span class="chip" data-city="энгельс">Энгельс</span>
-        </div>
-      </div>
-      <div class="hint" style="margin-top:6px;">Лейблы домов показываются на зуме ≥ 15. В ручном режиме: Shift+тащить — прямоугольное выделение.</div>
-    </div>
-
     <!-- 🏠 Единая база -->
     <div class="panel" id="basePanel">
-      <div class="row" style="justify-content:space-between; align-items:center;">
+      <div class="base-header">
         <div class="title">Единая база</div>
+        <div class="base-header-left">
+          <button id="btnBasePanelToggle" class="ghost icon-btn" title="Свернуть список" aria-label="Свернуть список">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <button id="btnBaseShow" class="ghost icon-btn" title="Показать адреса на карте" aria-label="Показать адреса на карте">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3.2"/></svg>
+          </button>
+          <button id="btnBaseHide" class="ghost icon-btn" title="Скрыть адреса на карте" aria-label="Скрыть адреса на карте">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 6.15A10.74 10.74 0 0 1 12 5c7 0 11 7 11 7a17.93 17.93 0 0 1-3.47 4.5"/><path d="M6.53 6.53A17.81 17.81 0 0 0 1 12s4 7 11 7a11.36 11.36 0 0 0 2-.17"/><path d="M9.5 9.5a3.2 3.2 0 0 0 4.5 4.5"/></svg>
+          </button>
+        </div>
         <div class="row">
           <button id="btnAddBase" class="ghost">Добавить адрес</button>
           <span id="countLbl" class="badge"></span>
         </div>
       </div>
-      <div class="muted" id="loadMsg" style="margin-top:6px;"></div>
-      <div class="label" style="margin-top:10px;">Фильтр по городам</div>
-      <div id="cityChips" class="chips"></div>
-      <div class="list" id="itemsList" style="margin-top:10px;"></div>
+      <div id="basePanelBody">
+        <div class="muted" id="loadMsg" style="margin-top:6px;"></div>
+        <div class="label" style="margin-top:10px;">Фильтр по городам</div>
+        <div id="cityChips" class="chips"></div>
+        <div class="list" id="itemsList" style="margin-top:10px;"></div>
+      </div>
     </div>
   </div>
 
@@ -256,6 +266,7 @@
   }).addTo(map);
 
   const basePanel = $('basePanel');
+  const basePanelBody = $('basePanelBody');
   const btnBasePanelToggle = $('btnBasePanelToggle');
   const btnBaseShow = $('btnBaseShow');
   const btnBaseHide = $('btnBaseHide');
@@ -266,6 +277,7 @@
   const btnOrderAdd = $('btnOrderAdd');
   const orderCreateSection = $('orderCreateSection');
   const naryadLoad = $('naryadLoad');
+  const sidebarToggle = $('sidebarToggle');
   const addOrderDefaultLabel = btnOrderAdd ? btnOrderAdd.textContent.trim() : 'Добавить наряд';
 
   function setOrderCreateOpen(open){
@@ -299,6 +311,7 @@
     labels: [],
     selectedBaseId: null,
     baseCollapsed: false,
+    sidebarCollapsed: false,
     cityFilter: new Set(),
     searchMode: 'local',
     searchQuery: '',
@@ -320,9 +333,23 @@
     naryadFsHandle: null
   };
 
+  function setSidebarCollapsed(collapsed){
+    state.sidebarCollapsed = !!collapsed;
+    document.body.classList.toggle('sidebar-collapsed', state.sidebarCollapsed);
+    updateSidebarToggle();
+    map.invalidateSize();
+    setTimeout(()=> map.invalidateSize(), 320);
+  }
+
   // --- Helpers
   const esc = s => String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   const norm = s => String(s||'').toLowerCase().replaceAll('ё','е').trim();
+  const ICONS = {
+    sidebarCollapse: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/><path d="M19 5v14"/></svg>',
+    sidebarExpand: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/><path d="M5 5v14"/></svg>',
+    baseCollapse: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>',
+    baseExpand: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 15 12 9 18 15"/></svg>'
+  };
   const ringLonLat_to_LatLng = ring => ring.map(([x,y])=>[y,x]);
   const ringLatLng_to_LonLat = ring => ring.map(p=>[p.lng, p.lat]);
   const rand = n => Math.floor(Math.random()*n);
@@ -627,16 +654,27 @@
 
   function updateBasePanelUI(){
     if(btnBasePanelToggle){
-      btnBasePanelToggle.textContent = state.baseCollapsed ? 'Развернуть список' : 'Свернуть список';
+      const label = state.baseCollapsed ? 'Развернуть список' : 'Свернуть список';
+      btnBasePanelToggle.title = label;
+      btnBasePanelToggle.setAttribute('aria-label', label);
+      btnBasePanelToggle.innerHTML = state.baseCollapsed ? ICONS.baseExpand : ICONS.baseCollapse;
     }
-    if(basePanel){
-      basePanel.style.display = state.baseCollapsed ? 'none' : '';
+    if(basePanelBody){
+      basePanelBody.classList.toggle('hidden', state.baseCollapsed);
     }
   }
 
   function updateBaseMapButtons(){
     if(btnBaseShow){ btnBaseShow.disabled = !state.baseMapHidden; }
     if(btnBaseHide){ btnBaseHide.disabled = state.baseMapHidden; }
+  }
+
+  function updateSidebarToggle(){
+    if(!sidebarToggle) return;
+    const label = state.sidebarCollapsed ? 'Показать меню' : 'Скрыть меню';
+    sidebarToggle.title = label;
+    sidebarToggle.setAttribute('aria-label', label);
+    sidebarToggle.innerHTML = state.sidebarCollapsed ? ICONS.sidebarExpand : ICONS.sidebarCollapse;
   }
 
   function renderQuickCityFilters(){
@@ -687,6 +725,12 @@
       updateBaseMapButtons();
       applyBaseVisibility();
     };
+  }
+
+  if(sidebarToggle){
+    sidebarToggle.addEventListener('click', ()=>{
+      setSidebarCollapsed(!state.sidebarCollapsed);
+    });
   }
 
   if(quickCityFilters){
@@ -2307,6 +2351,7 @@
   map.on('moveend zoomend', addBaseLabelsIfZoom);
   updateBasePanelUI();
   updateBaseMapButtons();
+  updateSidebarToggle();
   renderQuickCityFilters();
 })(); // конец IIFE
 </script>
