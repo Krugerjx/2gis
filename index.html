@@ -146,6 +146,7 @@
           <button id="btnAddManual" class="ghost">+ Новый (вручную)</button>
           <button id="btnOrdersShowAll" class="ghost">Показать все на карте</button>
           <button id="btnOrdersHideAll" class="ghost">Скрыть все с карты</button>
+          <button id="btnOrdersScreenshot" class="ghost">Скрин карты</button>
         </div>
       </div>
       <div class="row" style="margin-top:6px; gap:6px; flex-wrap:wrap;">
@@ -237,6 +238,7 @@
   const quickCityFilters = $('quickCityFilters');
   const btnOrdersShowAll = $('btnOrdersShowAll');
   const btnOrdersHideAll = $('btnOrdersHideAll');
+  const btnOrdersScreenshot = $('btnOrdersScreenshot');
 
   // --- Состояние
   const state = {
@@ -1454,6 +1456,15 @@
     };
   }
 
+  if(btnOrdersScreenshot){
+    btnOrdersScreenshot.onclick = ()=>{
+      captureActiveOrdersScreenshot().catch(err=>{
+        console.error(err);
+        alert(err?.message || 'Не удалось сформировать скрин.');
+      });
+    };
+  }
+
   updateOrdersMapButtons();
 
   function deleteOrder(orderId){
@@ -1585,6 +1596,106 @@
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     }, 0);
+  }
+
+  async function captureActiveOrdersScreenshot(){
+    if(typeof window.html2canvas !== 'function'){
+      throw new Error('html2canvas недоступен');
+    }
+    const activeOrders = state.orders.filter(order=>{
+      const group = state.orderLayers.get(order.id);
+      return Array.isArray(order.items) && order.items.length && group && map.hasLayer(group);
+    });
+    if(!activeOrders.length){
+      throw new Error('Нет активных нарядов на карте.');
+    }
+
+    const mapCanvas = await window.html2canvas(map.getContainer(), {
+      useCORS:true,
+      backgroundColor:'#ffffff',
+      scale:2
+    });
+
+    const now = new Date();
+    const headerText = `Активные наряды (${activeOrders.length})`;
+    const infoText = `Снимок: ${now.toLocaleString('ru-RU')}`;
+
+    const baseWidth = mapCanvas.width;
+    const paddingX = Math.max(40, Math.round(baseWidth * 0.04));
+    const paddingY = Math.max(30, Math.round(baseWidth * 0.03));
+    const headerFontSize = Math.max(28, Math.round(baseWidth * 0.03));
+    const infoFontSize = Math.max(20, Math.round(baseWidth * 0.02));
+    const lineFontSize = Math.max(22, Math.round(baseWidth * 0.022));
+    const headerGap = Math.round(headerFontSize * 0.4);
+    const infoGap = Math.round(infoFontSize * 0.5);
+    const lineGap = Math.round(lineFontSize * 0.45);
+    const lineHeight = lineFontSize + lineGap;
+    const captionHeight = paddingY * 2 + headerFontSize + headerGap + infoFontSize + infoGap + (activeOrders.length * lineHeight);
+    const colorBoxSize = Math.round(lineFontSize * 0.9);
+    const colorBoxGap = Math.round(lineFontSize * 0.6);
+
+    const finalCanvas = document.createElement('canvas');
+    finalCanvas.width = mapCanvas.width;
+    finalCanvas.height = mapCanvas.height + captionHeight;
+    const ctx = finalCanvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, finalCanvas.width, finalCanvas.height);
+    ctx.drawImage(mapCanvas, 0, 0);
+
+    const captionTop = mapCanvas.height;
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillRect(0, captionTop, finalCanvas.width, captionHeight);
+
+    ctx.textBaseline = 'alphabetic';
+    let cursorY = captionTop + paddingY;
+
+    ctx.fillStyle = '#0f172a';
+    ctx.font = `600 ${headerFontSize}px "Segoe UI", "Helvetica Neue", Arial, sans-serif`;
+    cursorY += headerFontSize;
+    ctx.fillText(headerText, paddingX, cursorY);
+    cursorY += headerGap;
+
+    ctx.fillStyle = '#475569';
+    ctx.font = `400 ${infoFontSize}px "Segoe UI", "Helvetica Neue", Arial, sans-serif`;
+    cursorY += infoFontSize;
+    ctx.fillText(infoText, paddingX, cursorY);
+    cursorY += infoGap;
+
+    ctx.font = `400 ${lineFontSize}px "Segoe UI", "Helvetica Neue", Arial, sans-serif`;
+    activeOrders.forEach(order=>{
+      const colorHex = normalizeHexColor(order.color, DEFAULT_ORDER_COLOR);
+      cursorY += lineHeight;
+      const boxY = cursorY - lineFontSize + Math.round((lineFontSize - colorBoxSize) / 2);
+      ctx.fillStyle = colorHex;
+      ctx.fillRect(paddingX, boxY, colorBoxSize, colorBoxSize);
+      ctx.strokeStyle = 'rgba(15,23,42,0.12)';
+      ctx.lineWidth = Math.max(2, Math.round(colorBoxSize * 0.12));
+      ctx.strokeRect(paddingX, boxY, colorBoxSize, colorBoxSize);
+      ctx.fillStyle = '#0f172a';
+      const text = `${order.code} — ${order.company} (адресов: ${order.items.length})`;
+      ctx.fillText(text, paddingX + colorBoxSize + colorBoxGap, cursorY);
+    });
+
+    await new Promise((resolve, reject)=>{
+      finalCanvas.toBlob(blob=>{
+        if(!blob){
+          reject(new Error('Не удалось сформировать изображение.'));
+          return;
+        }
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const iso = now.toISOString().replace(/[:.]/g, '-');
+        a.download = `orders_active_${iso}.png`;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(()=>{
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          resolve();
+        }, 0);
+      }, 'image/png');
+    });
   }
 
   async function captureOrderMap(order){
