@@ -511,19 +511,27 @@
   }
   async function ghLoadWithRawFallback(spec, {missingValue}={}){
     const rawUrl = `https://raw.githubusercontent.com/${spec.repo}/${spec.branch}/${spec.path}`;
-    let lastErr = null;
-    try{
-      return await loadJsonNoCache(rawUrl);
-    }catch(err){
-      lastErr = err;
-      if(spec.token){
-        try{
-          return await ghDownloadJson(spec);
-        }catch(err2){
-          lastErr = err2;
-        }
-      }
+    const errors = [];
+
+    async function attempt(fn){
+      try{ return await fn(); }
+      catch(err){ errors.push(err); return null; }
     }
+
+    if(spec.token){
+      const withAuth = await attempt(()=> loadJsonNoCache(rawUrl, spec.token, { forceAuth:true }));
+      if(withAuth) return withAuth;
+    }
+
+    const withoutAuth = await attempt(()=> loadJsonNoCache(rawUrl));
+    if(withoutAuth) return withoutAuth;
+
+    if(spec.token){
+      const viaApi = await attempt(()=> ghDownloadJson(spec));
+      if(viaApi) return viaApi;
+    }
+
+    const lastErr = errors[errors.length-1] || new Error(`Failed to load ${spec.path}`);
     if(missingValue && /404/.test(lastErr?.message||'')) return missingValue;
     throw lastErr;
   }
