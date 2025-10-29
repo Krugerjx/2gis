@@ -475,6 +475,19 @@
     if(!r.ok){ const txt=await r.text().catch(()=> ''); const err=new Error(`GitHub PUT ${r.status}: ${txt||'Failed to save'}`); err._status=r.status; throw err; }
     return await r.json();
   }
+  async function ghDownloadBlobJson({repo, token}, sha){
+    const url = `https://api.github.com/repos/${repo}/git/blobs/${encodeURIComponent(sha)}`;
+    const headers = {
+      'Accept':'application/vnd.github.raw',
+      'X-GitHub-Api-Version':'2022-11-28'
+    };
+    if(token){ headers['Authorization'] = `token ${token}`; }
+    const r = await fetch(url, { method:'GET', headers });
+    if(!r.ok){ const txt = await r.text().catch(()=> ''); throw new Error(`GitHub blob ${r.status}: ${txt}`); }
+    const text = await r.text();
+    try{ return JSON.parse(text); }
+    catch(e){ throw new Error(`JSON parse error for blob ${sha}: ${e.message}`); }
+  }
   async function ghDownloadJson({repo,branch,path,token}){
     const url = `https://api.github.com/repos/${repo}/contents/${encodePathForContentsAPI(path)}?ref=${encodeURIComponent(branch)}`;
     const headers = { 'Accept':'application/vnd.github+json', 'X-GitHub-Api-Version':'2022-11-28' };
@@ -483,10 +496,16 @@
     if(r.status===404){ throw new Error('HTTP 404'); }
     if(!r.ok){ const txt = await r.text().catch(()=> ''); throw new Error(`GitHub GET ${r.status}: ${txt}`); }
     const j = await r.json();
-    if(typeof j.content === 'string' && j.encoding === 'base64'){
+    if(typeof j.content === 'string' && j.encoding === 'base64' && !j.truncated){
       const text = fromBase64Unicode(j.content);
       try{ return JSON.parse(text); }
       catch(e){ throw new Error(`JSON parse error for ${path}: ${e.message}`); }
+    }
+    if(j.download_url){
+      return await loadJsonNoCache(j.download_url, token, { forceAuth:true });
+    }
+    if(j.sha){
+      return await ghDownloadBlobJson({repo, token}, j.sha);
     }
     throw new Error(`Unexpected GitHub response for ${path}`);
   }
@@ -2265,14 +2284,18 @@
 
   // Загрузка без кэша
   function normalizeNaryad(j){ return { version: j.version||1, updated_at: j.updated_at || new Date().toISOString(), orders: Array.isArray(j.orders)? j.orders : [] }; }
-  async function loadJsonNoCache(url, token){
+  async function loadJsonNoCache(url, token, {forceAuth=false}={}){
     const bust = url + (url.includes('?') ? '&' : '?') + 'v=' + Date.now();
     const headers = { 'Accept':'application/json' };
     if(token){
-      try{
-        const { hostname } = new URL(url);
-        if(hostname !== 'raw.githubusercontent.com'){ headers['Authorization'] = `token ${token}`; }
-      }catch(_){ headers['Authorization'] = `token ${token}`; }
+      let attach = forceAuth;
+      if(!attach){
+        try{
+          const { hostname } = new URL(url);
+          attach = hostname !== 'raw.githubusercontent.com';
+        }catch(_){ attach = true; }
+      }
+      if(attach){ headers['Authorization'] = `token ${token}`; }
     }
     const r = await fetch(bust, { cache:'no-store', headers });
     if(!r.ok) throw new Error('HTTP '+r.status);
