@@ -307,6 +307,8 @@
   // --- Состояние
   const state = {
     db: {version:1, updated_at:new Date().toISOString(), items:[]},
+    dbSources: [],
+    dbSourceById: new Map(),
     features: new Map(),
     labels: [],
     selectedBaseId: null,
@@ -329,6 +331,7 @@
     dragStart: null,
 
     ghDb: null,
+    ghDbSpecs: [],
     ghNrd: null,
     naryadFsHandle: null
   };
@@ -443,6 +446,105 @@
     const path = pathParts.join(':') || fallbackPath;
     return { repo: repoPart, branch, path, token };
   }
+  function resolveGhRelativePath(basePath, extra){
+    const cleanExtra = String(extra||'').trim();
+    if(!cleanExtra) return basePath;
+    if(cleanExtra.startsWith('/')) return cleanExtra.replace(/^\/+/, '');
+    const parts = Array.isArray(basePath?.split) ? basePath.split('/') : [];
+    if(parts.length) parts.pop();
+    const extraParts = cleanExtra.split('/');
+    for(const part of extraParts){
+      if(!part || part === '.') continue;
+      if(part === '..'){ if(parts.length) parts.pop(); continue; }
+      parts.push(part);
+    }
+    return parts.join('/');
+  }
+  function parseGhSpecString(raw, fallbackSpec){
+    if(!fallbackSpec) return null;
+    const value = String(raw||'').trim();
+    if(!value) return null;
+    const repoPattern = /^[^@\s]+\/[\w.-]+@/;
+    if(repoPattern.test(value)){
+      const [repoPart, rest=''] = value.split('@');
+      const [branchPart, ...pathParts] = rest.split(':');
+      const branch = branchPart || fallbackSpec.branch;
+      const path = pathParts.length ? pathParts.join(':') : fallbackSpec.path;
+      return { repo: repoPart, branch, path, token: fallbackSpec.token };
+    }
+    if(value.includes('@')){
+      const [branchPart, ...pathParts] = value.split(':');
+      const branch = branchPart || fallbackSpec.branch;
+      const path = pathParts.length ? pathParts.join(':') : fallbackSpec.path;
+      return { repo: fallbackSpec.repo, branch, path, token: fallbackSpec.token };
+    }
+    return { ...fallbackSpec, path: resolveGhRelativePath(fallbackSpec.path, value) };
+  }
+  function buildGhDbSpecList(primary){
+    if(!primary) return [];
+    const params = new URLSearchParams(location.hash.slice(1));
+    const extras = new Set();
+    params.getAll('ghdblist').forEach(v=>{
+      String(v||'').split(/[,;]/).forEach(part=>{ const clean = part.trim(); if(clean) extras.add(clean); });
+    });
+    ['ghdb2','ghdbextra','ghdb_eng','ghdbadd'].forEach(key=>{
+      const val = params.get(key);
+      if(val) extras.add(val);
+    });
+    const autoMap = {
+      'database.json': ['eng_database.json'],
+      'databese.json': ['eng_database.json'],
+      'eng_database.json': ['database.json']
+    };
+    const baseName = (primary.path.split('/').pop() || '').toLowerCase();
+    (autoMap[baseName]||[]).forEach(name=> extras.add(name));
+
+    const specs = [];
+    const seen = new Set();
+    function push(spec){
+      if(!spec) return;
+      const key = `${spec.repo}|${spec.branch}|${spec.path}`;
+      if(seen.has(key)) return;
+      seen.add(key);
+      specs.push(spec);
+    }
+    push(primary);
+    extras.forEach(extra=> push(parseGhSpecString(extra, primary)));
+    return specs;
+  }
+  function formatGhSpecs(specs){
+    if(!Array.isArray(specs) || !specs.length) return '';
+    const repoSet = new Set(specs.map(s=> `${s.repo}@${s.branch}`));
+    if(repoSet.size === 1){
+      const first = specs[0];
+      const paths = specs.map(s=> s.path).join(' + ');
+      return `${first.repo}@${first.branch} → ${paths}`;
+    }
+    return specs.map(s=> `${s.repo}@${s.branch}:${s.path}`).join(' + ');
+  }
+  function updateLoadMessage(){
+    const el = $('loadMsg');
+    if(!el) return;
+    el.className = 'muted';
+    if(state.ghDbSpecs.length){
+      const base = formatGhSpecs(state.ghDbSpecs);
+      const nrd = state.ghNrd ? state.ghNrd.path : 'локально';
+      const extrasParts = [];
+      if(state.dbSources.length>1){
+        extrasParts.push(`Файлы базы: ${state.dbSources.map(s=> s.label || (s.spec? s.spec.path : '')).filter(Boolean).join(', ')}`);
+      }
+      if(state.ghDbSpecs.length>1){
+        extrasParts.push('Сохранение GitHub отключено (несколько файлов)');
+      }
+      const extras = extrasParts.length ? ' • '+extrasParts.join(' • ') : '';
+      el.textContent = `GitHub: ${base} | Наряды: ${nrd}${extras}`;
+    }else{
+      const extras = state.dbSources.length>1
+        ? ` • Файлы базы: ${state.dbSources.map(s=> s.label).filter(Boolean).join(', ')}`
+        : '';
+      el.textContent = `Pages: читаем ./database.json (+ ./eng_database.json, если есть) и ./naryad.json (если есть).${extras}`;
+    }
+  }
   function encodePathForContentsAPI(path){ return path.split('/').map(encodeURIComponent).join('/'); }
   function toBase64Unicode(str){
     const bytes = new TextEncoder().encode(str);
@@ -475,6 +577,19 @@
     if(!r.ok){ const txt=await r.text().catch(()=> ''); const err=new Error(`GitHub PUT ${r.status}: ${txt||'Failed to save'}`); err._status=r.status; throw err; }
     return await r.json();
   }
+  async function ghDownloadBlobJson({repo, token}, sha){
+    const url = `https://api.github.com/repos/${repo}/git/blobs/${encodeURIComponent(sha)}`;
+    const headers = {
+      'Accept':'application/vnd.github.raw',
+      'X-GitHub-Api-Version':'2022-11-28'
+    };
+    if(token){ headers['Authorization'] = `token ${token}`; }
+    const r = await fetch(url, { method:'GET', headers });
+    if(!r.ok){ const txt = await r.text().catch(()=> ''); throw new Error(`GitHub blob ${r.status}: ${txt}`); }
+    const text = await r.text();
+    try{ return JSON.parse(text); }
+    catch(e){ throw new Error(`JSON parse error for blob ${sha}: ${e.message}`); }
+  }
   async function ghDownloadJson({repo,branch,path,token}){
     const url = `https://api.github.com/repos/${repo}/contents/${encodePathForContentsAPI(path)}?ref=${encodeURIComponent(branch)}`;
     const headers = { 'Accept':'application/vnd.github+json', 'X-GitHub-Api-Version':'2022-11-28' };
@@ -483,29 +598,68 @@
     if(r.status===404){ throw new Error('HTTP 404'); }
     if(!r.ok){ const txt = await r.text().catch(()=> ''); throw new Error(`GitHub GET ${r.status}: ${txt}`); }
     const j = await r.json();
-    if(typeof j.content === 'string' && j.encoding === 'base64'){
+    if(typeof j.content === 'string' && j.encoding === 'base64' && !j.truncated){
       const text = fromBase64Unicode(j.content);
       try{ return JSON.parse(text); }
       catch(e){ throw new Error(`JSON parse error for ${path}: ${e.message}`); }
     }
+    const attempts = [];
+    function track(label, err){ err._source = label; attempts.push(err); }
+
+    let blobTried = false;
+    if(token && j.sha){
+      blobTried = true;
+      try{
+        return await ghDownloadBlobJson({repo, token}, j.sha);
+      }catch(err){ track('blob-auth', err); }
+    }
+
+    if(j.download_url){
+      try{
+        return await loadJsonNoCache(j.download_url, token, { forceAuth:true });
+      }catch(err){ track('download', err); }
+    }
+
+    if(j.sha && !blobTried){
+      try{
+        return await ghDownloadBlobJson({repo, token}, j.sha);
+      }catch(err){ track('blob', err); }
+    }
+
+    const lastErr = attempts[attempts.length-1];
+    if(lastErr){ throw lastErr; }
     throw new Error(`Unexpected GitHub response for ${path}`);
   }
   async function ghLoadWithRawFallback(spec, {missingValue}={}){
     const rawUrl = `https://raw.githubusercontent.com/${spec.repo}/${spec.branch}/${spec.path}`;
-    let lastErr = null;
-    try{
-      return await loadJsonNoCache(rawUrl);
-    }catch(err){
-      lastErr = err;
-      if(spec.token){
-        try{
-          return await ghDownloadJson(spec);
-        }catch(err2){
-          lastErr = err2;
-        }
+    const errors = [];
+    const FAIL = Symbol('fail');
+
+    async function attempt(label, fn){
+      try{
+        const value = await fn();
+        return value === undefined ? FAIL : value;
+      }catch(err){
+        err._ghStep = label;
+        errors.push(err);
+        return FAIL;
       }
     }
+
+    const viaApi = await attempt('api', ()=> ghDownloadJson(spec));
+    if(viaApi !== FAIL) return viaApi;
+
+    if(spec.token){
+      const withAuth = await attempt('raw-auth', ()=> loadJsonNoCache(rawUrl, spec.token, { forceAuth:true }));
+      if(withAuth !== FAIL) return withAuth;
+    }
+
+    const withoutAuth = await attempt('raw-public', ()=> loadJsonNoCache(rawUrl));
+    if(withoutAuth !== FAIL) return withoutAuth;
+
+    const lastErr = errors[errors.length-1] || new Error(`Failed to load ${spec.path}`);
     if(missingValue && /404/.test(lastErr?.message||'')) return missingValue;
+    if(lastErr && lastErr._ghStep){ lastErr.message += ` (${lastErr._ghStep})`; }
     throw lastErr;
   }
 
@@ -574,6 +728,105 @@
         id: String(x.id || uid()), title: x.title||'', city: x.city||'', polygon: Array.isArray(x.polygon)?x.polygon:null
       })) : []
     };
+  }
+  function combineDbSegments(segments){
+    if(!Array.isArray(segments) || !segments.length){
+      return normalizeDb({ version:1, updated_at:new Date().toISOString(), items:[] });
+    }
+    state.dbSourceById.clear();
+    state.dbSources = segments.map((segment, idx)=>({
+      key: segment.key || `${segment.type||'source'}:${idx}`,
+      label: segment.label || '',
+      type: segment.type || 'source',
+      spec: segment.spec || null,
+      count: 0
+    }));
+    const combined = { version:1, updated_at:new Date().toISOString(), items:[] };
+    let latestTs = 0;
+    let maxVersion = 1;
+    const usedIds = new Set();
+    const idCounters = new Map();
+
+    segments.forEach((segment, idx)=>{
+      const normalized = normalizeDb(segment.data || {});
+      maxVersion = Math.max(maxVersion, normalized.version||1);
+      const ts = Date.parse(normalized.updated_at || '');
+      if(!Number.isNaN(ts) && ts > latestTs){
+        latestTs = ts;
+        combined.updated_at = normalized.updated_at;
+      }
+      normalized.items.forEach(item=>{
+        if(!item || typeof item !== 'object') return;
+        let id = String(item.id || uid());
+        if(usedIds.has(id)){
+          let counter = idCounters.get(id) || 2;
+          let candidate = `${id}-${counter}`;
+          while(usedIds.has(candidate)){
+            counter += 1;
+            candidate = `${id}-${counter}`;
+          }
+          idCounters.set(id, counter + 1);
+          id = candidate;
+          item = { ...item, id };
+        }
+        usedIds.add(id);
+        combined.items.push(item);
+        const source = state.dbSources[idx];
+        if(source){
+          source.count += 1;
+          state.dbSourceById.set(id, source.key);
+        }
+      });
+    });
+
+    combined.version = maxVersion;
+    if(!latestTs){
+      combined.updated_at = new Date().toISOString();
+    }
+    return combined;
+  }
+  async function loadGitHubDatabases(specs){
+    const segments = [];
+    for(let i=0;i<specs.length;i++){
+      const spec = specs[i];
+      try{
+        const data = await ghLoadWithRawFallback(spec);
+        segments.push({ type:'github', label: spec.path, spec, data });
+      }catch(err){
+        const msg = err?.message || '';
+        const is404 = /404/.test(msg);
+        if(i === 0 || !is404){
+          throw new Error(`${spec.path}: ${msg}`.trim());
+        }
+        console.warn('[gh-db] skip', spec.path, err);
+      }
+    }
+    if(!segments.length){
+      throw new Error('Не удалось загрузить базы GitHub.');
+    }
+    return combineDbSegments(segments);
+  }
+  async function loadLocalDatabases(){
+    const files = ['database.json', 'eng_database.json'];
+    const segments = [];
+    for(let i=0;i<files.length;i++){
+      const file = files[i];
+      const url = new URL(file, location.href).toString();
+      try{
+        const data = await loadJsonNoCache(url);
+        segments.push({ type:'local', label: file, data });
+      }catch(err){
+        const msg = err?.message || '';
+        if(i === 0){
+          throw new Error(`${file}: ${msg}`.trim());
+        }
+        if(!/404/.test(msg)){ console.warn('[local-db] skip', file, err); }
+      }
+    }
+    if(!segments.length){
+      throw new Error('database.json: HTTP 404');
+    }
+    return combineDbSegments(segments);
   }
   async function loadDbFromUrl(url){
     const bust = url + (url.includes('?') ? '&' : '?') + 'v=' + Date.now();
@@ -2265,14 +2518,18 @@
 
   // Загрузка без кэша
   function normalizeNaryad(j){ return { version: j.version||1, updated_at: j.updated_at || new Date().toISOString(), orders: Array.isArray(j.orders)? j.orders : [] }; }
-  async function loadJsonNoCache(url, token){
+  async function loadJsonNoCache(url, token, {forceAuth=false}={}){
     const bust = url + (url.includes('?') ? '&' : '?') + 'v=' + Date.now();
     const headers = { 'Accept':'application/json' };
     if(token){
-      try{
-        const { hostname } = new URL(url);
-        if(hostname !== 'raw.githubusercontent.com'){ headers['Authorization'] = `token ${token}`; }
-      }catch(_){ headers['Authorization'] = `token ${token}`; }
+      let attach = forceAuth;
+      if(!attach){
+        try{
+          const { hostname } = new URL(url);
+          attach = hostname !== 'raw.githubusercontent.com';
+        }catch(_){ attach = true; }
+      }
+      if(attach){ headers['Authorization'] = `token ${token}`; }
     }
     const r = await fetch(bust, { cache:'no-store', headers });
     if(!r.ok) throw new Error('HTTP '+r.status);
@@ -2284,29 +2541,31 @@
     // GitHub параметры: #ghdb=OWNER/REPO@branch:path/to/database.json&ghnrd=OWNER/REPO@branch:path/to/naryad.json&token=ghp_xxx
     // (поддерживается сокращение #gh=... для базы и #naryad=... для нарядов)
     state.ghDb  = parseGhFromHashKey('ghdb',  'database.json', ['gh']);
+    state.ghDbSpecs = buildGhDbSpecList(state.ghDb);
+    if(state.ghDbSpecs.length){
+      state.ghDb = state.ghDbSpecs[0];
+    }else{
+      state.ghDb = null;
+    }
     state.ghNrd = parseGhFromHashKey('ghnrd', 'naryad.json', ['ghnaryad','naryad']);
     if(!state.ghNrd && state.ghDb){
       const basePath = state.ghDb.path.split('/'); basePath[basePath.length-1] = 'naryad.json';
       state.ghNrd = { ...state.ghDb, path: basePath.join('/') };
     }
 
-    if(state.ghDb){
-      $('loadMsg').textContent = `GitHub: ${state.ghDb.repo}@${state.ghDb.branch} → ${state.ghDb.path} | Наряды: ${state.ghNrd? state.ghNrd.path : 'локально'}`;
-    }else{
-      $('loadMsg').textContent = 'Pages: читаем ./database.json и ./naryad.json (если есть).';
-    }
+    updateLoadMessage();
 
     try{
-      const dbPromise = state.ghDb
-        ? ghLoadWithRawFallback(state.ghDb)
-        : loadJsonNoCache(new URL('database.json', location.href).toString());
+      const dbPromise = state.ghDbSpecs.length
+        ? loadGitHubDatabases(state.ghDbSpecs)
+        : loadLocalDatabases();
 
       const nrdPromise = state.ghNrd
         ? ghLoadWithRawFallback(state.ghNrd, {missingValue:{orders: []}})
         : loadJsonNoCache(new URL('naryad.json', location.href).toString()).catch(_=> ({orders: []}));
 
       const [db, nrd] = await Promise.all([
-        dbPromise.catch(e=>{ throw new Error('database.json: '+e.message); }),
+        dbPromise.catch(e=>{ throw new Error('База: '+(e?.message || e)); }),
         nrdPromise.catch(e=>{ if(/404/.test(e.message||'')) return {orders: []}; throw e; })
       ]);
       state.db = normalizeDb(db);
@@ -2316,6 +2575,7 @@
       state.addrToOrder.clear();
       state.orders.forEach(o=> o.items.forEach(it=> state.addrToOrder.set(it.id, o.id)) );
       state.orders.forEach(o=> refreshOrderLayer(o));
+      updateLoadMessage();
       renderCityChips(); renderBaseList(); applyBaseVisibility(); renderOrdersList();
       updateBasePanelUI(); updateBaseMapButtons();
       localStorage.setItem('naryad.json', JSON.stringify(getNaryadsObject()));
@@ -2328,6 +2588,9 @@
 
   async function saveDb(){
     const content = JSON.stringify({ ...state.db, updated_at:new Date().toISOString() }, null, 2);
+    if(state.ghDb && state.ghDb.token && Array.isArray(state.ghDbSpecs) && state.ghDbSpecs.length>1){
+      throw new Error('Сохранение в GitHub недоступно: база собрана из нескольких файлов. Редактируйте и загружайте их по отдельности, указывая один путь в #ghdb.');
+    }
     if(state.ghDb && state.ghDb.token){
       let sha = await ghGetSha(state.ghDb);
       try{
