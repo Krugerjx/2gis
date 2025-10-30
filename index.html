@@ -512,27 +512,33 @@
   async function ghLoadWithRawFallback(spec, {missingValue}={}){
     const rawUrl = `https://raw.githubusercontent.com/${spec.repo}/${spec.branch}/${spec.path}`;
     const errors = [];
+    const FAIL = Symbol('fail');
 
-    async function attempt(fn){
-      try{ return await fn(); }
-      catch(err){ errors.push(err); return null; }
+    async function attempt(label, fn){
+      try{
+        const value = await fn();
+        return value === undefined ? FAIL : value;
+      }catch(err){
+        err._ghStep = label;
+        errors.push(err);
+        return FAIL;
+      }
     }
+
+    const viaApi = await attempt('api', ()=> ghDownloadJson(spec));
+    if(viaApi !== FAIL) return viaApi;
 
     if(spec.token){
-      const withAuth = await attempt(()=> loadJsonNoCache(rawUrl, spec.token, { forceAuth:true }));
-      if(withAuth) return withAuth;
+      const withAuth = await attempt('raw-auth', ()=> loadJsonNoCache(rawUrl, spec.token, { forceAuth:true }));
+      if(withAuth !== FAIL) return withAuth;
     }
 
-    const withoutAuth = await attempt(()=> loadJsonNoCache(rawUrl));
-    if(withoutAuth) return withoutAuth;
-
-    if(spec.token){
-      const viaApi = await attempt(()=> ghDownloadJson(spec));
-      if(viaApi) return viaApi;
-    }
+    const withoutAuth = await attempt('raw-public', ()=> loadJsonNoCache(rawUrl));
+    if(withoutAuth !== FAIL) return withoutAuth;
 
     const lastErr = errors[errors.length-1] || new Error(`Failed to load ${spec.path}`);
     if(missingValue && /404/.test(lastErr?.message||'')) return missingValue;
+    if(lastErr && lastErr._ghStep){ lastErr.message += ` (${lastErr._ghStep})`; }
     throw lastErr;
   }
 
