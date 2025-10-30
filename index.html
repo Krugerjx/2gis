@@ -1645,7 +1645,7 @@
     return 0;
   }
 
-  let uploadRows=[]; // [{address, qty, foundId|null}]
+  let uploadRows=[]; // [{address, qty, foundId|null, hasPolygon:boolean}]
 
   fileInput.addEventListener('change', handleFile);
   btnClearUpload.onclick = ()=>{
@@ -1726,7 +1726,15 @@
       return;
     }
 
-    uploadRows = mapped.map(r=>({ address:r.address, qty:r.qty, foundId: matchAddressToBase(r.address) }));
+    uploadRows = mapped.map(r=>{
+      const foundId = matchAddressToBase(r.address);
+      let hasPolygon = false;
+      if(foundId){
+        const base = state.db.items.find(item=>item.id===foundId);
+        hasPolygon = !!(base && Array.isArray(base.polygon) && base.polygon.length>=3);
+      }
+      return { address:r.address, qty:r.qty, foundId, hasPolygon };
+    });
 
     const hits = uploadRows.filter(x=>x.foundId);
     const miss = uploadRows.filter(x=>!x.foundId);
@@ -1747,7 +1755,16 @@
     uploadRows.forEach((r,i)=>{
       const tr=document.createElement('tr');
       tr.className = r.foundId? 'hit' : 'miss';
-      tr.innerHTML = `<td>${i+1}</td><td>${esc(r.address)}</td><td>${r.qty}</td><td>${r.foundId? 'Найден в базе' : 'Не найден'}</td>`;
+      let status;
+      if(r.foundId){
+        const badge = r.hasPolygon
+          ? '<span class="ok">контур есть</span>'
+          : '<span class="dangerText">контура нет</span>';
+        status = `Найден в базе • ${badge}`;
+      } else {
+        status = 'Не найден';
+      }
+      tr.innerHTML = `<td>${i+1}</td><td>${esc(r.address)}</td><td>${r.qty}</td><td>${status}</td>`;
       tbody.appendChild(tr);
     });
     matchTable.appendChild(tbody);
