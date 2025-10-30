@@ -501,12 +501,31 @@
       try{ return JSON.parse(text); }
       catch(e){ throw new Error(`JSON parse error for ${path}: ${e.message}`); }
     }
+    const attempts = [];
+    function track(label, err){ err._source = label; attempts.push(err); }
+
+    let blobTried = false;
+    if(token && j.sha){
+      blobTried = true;
+      try{
+        return await ghDownloadBlobJson({repo, token}, j.sha);
+      }catch(err){ track('blob-auth', err); }
+    }
+
     if(j.download_url){
-      return await loadJsonNoCache(j.download_url, token, { forceAuth:true });
+      try{
+        return await loadJsonNoCache(j.download_url, token, { forceAuth:true });
+      }catch(err){ track('download', err); }
     }
-    if(j.sha){
-      return await ghDownloadBlobJson({repo, token}, j.sha);
+
+    if(j.sha && !blobTried){
+      try{
+        return await ghDownloadBlobJson({repo, token}, j.sha);
+      }catch(err){ track('blob', err); }
     }
+
+    const lastErr = attempts[attempts.length-1];
+    if(lastErr){ throw lastErr; }
     throw new Error(`Unexpected GitHub response for ${path}`);
   }
   async function ghLoadWithRawFallback(spec, {missingValue}={}){
