@@ -96,7 +96,7 @@
     .sg-title { font-weight:600; }
 
     /* Инлайн-редактор */
-    .inline-editor { grid-column: 1 / -1; background:#fff; border:1px solid #eee; border-radius:10px; padding:10px; display:none; }
+    .inline-editor { grid-column: 1 / -1; background:#fff; border:1px solid #eee; border-radius:10px; padding:10px; display:none; margin-top:8px; }
     .inline-editor.open { display:block; }
     .inline-row { display:grid; grid-template-columns: 1fr; gap:8px; }
     .inline-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:6px; }
@@ -182,9 +182,6 @@
       </div>
       <div id="ordersList" class="list" style="margin-top:8px;"></div>
     </div>
-
-    <!-- 🔧 Редактор адреса (контейнер для openBaseEditor) -->
-    <div class="panel" id="editPanel" style="display:none;"></div>
 
     <!-- 🔧 Редактор наряда -->
     <div class="panel" id="orderEditPanel" style="display:none;"></div>
@@ -325,6 +322,8 @@
     orderLayers: new Map(),
     addrToOrder: new Map(),
     activeOrderId: null,
+    editingBaseId: null,
+    baseEditorCleanup: null,
 
     selection: new Set(),
     dragRect: null,
@@ -862,9 +861,217 @@
   window.addEventListener('keydown', (e)=>{ if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='k'){ e.preventDefault(); searchBox.focus(); searchBox.select(); }});
   function setSearch(v){ state.searchQuery=v; renderBaseList(); applyBaseVisibility(); if(state.searchMode==='global') debouncedNominatim(v); }
 
+  function cleanupBaseEditor({preserveEditingId=false}={}){
+    if(state.baseEditorCleanup){
+      try{ state.baseEditorCleanup(); }
+      catch(_){ }
+      state.baseEditorCleanup = null;
+    }
+    document.querySelectorAll('.inline-editor.open').forEach(el=>{
+      el.classList.remove('open');
+      el.innerHTML='';
+    });
+    if(!preserveEditingId){
+      state.editingBaseId = null;
+    }
+  }
+
+  function mountBaseEditor(it, container){
+    if(!container) return;
+    cleanupBaseEditor({preserveEditingId:true});
+    state.editingBaseId = it.id;
+
+    container.classList.add('open');
+    container.innerHTML = `
+      <div class="title" style="margin-bottom:6px;">Редактирование адреса</div>
+      <div class="inline-row">
+        <div>
+          <div class="label">Название</div>
+          <input type="text" data-role="title" value="${esc(it.title||'')}" />
+        </div>
+        <div>
+          <div class="label">Город</div>
+          <input type="text" data-role="city" value="${esc(it.city||'')}" />
+        </div>
+      </div>
+      <div class="inline-actions" style="margin-top:6px;">
+        <button class="ghost" data-role="relink">Привязать к OSM</button>
+        <button class="ghost" data-role="draw">Нарисовать вручную</button>
+        <button class="ghost" data-role="draw-finish" style="display:none;">Завершить рисование</button>
+        <button class="ghost" data-role="draw-undo" style="display:none;">Отменить точку</button>
+        <button class="ghost" data-role="clear-poly">Удалить полигон</button>
+      </div>
+      <div class="inline-footer">
+        <button class="primary" data-role="save">Сохранить</button>
+        <button class="ghost" data-role="cancel">Отмена</button>
+        <span class="muted" data-role="message"></span>
+      </div>
+      <div class="hint" data-role="hint" style="margin-top:6px;"></div>
+    `;
+
+    const eTitle = container.querySelector('[data-role="title"]');
+    const eCity = container.querySelector('[data-role="city"]');
+    const modeHint = container.querySelector('[data-role="hint"]');
+    const editMsg = container.querySelector('[data-role="message"]');
+    const btnRelink = container.querySelector('[data-role="relink"]');
+    const btnDraw = container.querySelector('[data-role="draw"]');
+    const btnDrawFinish = container.querySelector('[data-role="draw-finish"]');
+    const btnDrawUndo = container.querySelector('[data-role="draw-undo"]');
+    const btnClearPoly = container.querySelector('[data-role="clear-poly"]');
+    const btnSave = container.querySelector('[data-role="save"]');
+    const btnCancel = container.querySelector('[data-role="cancel"]');
+
+    let drawMode=false, drawPoints=[], drawLayer=null, previewLayer=null, relinkMode=false;
+
+    function removePreview(){
+      if(previewLayer){ map.removeLayer(previewLayer); previewLayer=null; }
+    }
+
+    function removeDrawLayer(){
+      if(drawLayer){ map.removeLayer(drawLayer); drawLayer=null; }
+    }
+
+    function stopRelink(){
+      relinkMode=false;
+      removePreview();
+    }
+
+    function startDraw(){
+      drawMode=true;
+      drawPoints=[];
+      removeDrawLayer();
+      btnDrawFinish.style.display='';
+      btnDrawUndo.style.display='';
+      modeHint.textContent='Кликай по карте, ставь точки. «Завершить рисование» — чтобы сформировать полигон.';
+    }
+
+    function stopDraw(clear){
+      drawMode=false;
+      btnDrawFinish.style.display='none';
+      btnDrawUndo.style.display='none';
+      if(clear){
+        drawPoints=[];
+        removeDrawLayer();
+      }
+    }
+
+    btnRelink.onclick = ()=>{
+      stopDraw(true);
+      relinkMode=true;
+      modeHint.textContent='Кликни на карте рядом со зданием — найдём ближайший контур (OSM).';
+    };
+
+    btnDraw.onclick = ()=>{
+      stopRelink();
+      startDraw();
+    };
+
+    btnDrawFinish.onclick = ()=>{
+      if(drawPoints.length<3) return alert('Нужно минимум 3 точки.');
+      removePreview();
+      previewLayer = L.polygon(drawPoints, { color:'#111', weight:2, fillColor:DEFAULT_BASE_COLOR, fillOpacity:.5 }).addTo(map);
+      stopDraw(false);
+      modeHint.textContent='Контур нарисован. Нажми «Сохранить».';
+    };
+
+    btnDrawUndo.onclick = ()=>{
+      drawPoints.pop();
+      removeDrawLayer();
+      if(drawPoints.length){
+        const pts = drawPoints.slice();
+        if(pts.length>=3) pts.push(pts[0]);
+        drawLayer = L.polyline(pts,{color:'#111',weight:2}).addTo(map);
+      }
+    };
+
+    btnClearPoly.onclick = ()=>{
+      it.polygon=null;
+      state.db.updated_at=new Date().toISOString();
+      applyBaseVisibility();
+      renderBaseList();
+      const editor = document.querySelector(`.inline-editor[data-editor-for="${CSS.escape(it.id)}"]`);
+      if(editor){
+        const msg = editor.querySelector('[data-role="message"]');
+        if(msg){ msg.className='muted'; msg.textContent='Полигон удалён (локально).'; }
+      }
+    };
+
+    btnSave.onclick = async ()=>{
+      it.title = eTitle.value.trim();
+      it.city = eCity.value.trim();
+      if(previewLayer){
+        const ring = previewLayer.getLatLngs()[0];
+        it.polygon = ringLatLng_to_LonLat(ring);
+      }
+      state.db.updated_at = new Date().toISOString();
+      try{
+        const res = await saveDb();
+        cleanupBaseEditor();
+        renderBaseList();
+        applyBaseVisibility();
+        $('loadMsg').textContent = res;
+        $('loadMsg').className = 'muted ok';
+      }
+      catch(err){
+        editMsg.className='muted dangerText';
+        editMsg.textContent = err.message;
+      }
+    };
+
+    btnCancel.onclick = ()=>{
+      cleanupBaseEditor();
+      renderBaseList();
+    };
+
+    const mapClick = (e)=>{
+      if(drawMode){
+        drawPoints.push(e.latlng);
+        removeDrawLayer();
+        const pts = drawPoints.slice();
+        if(pts.length>=3) pts.push(pts[0]);
+        drawLayer = L.polyline(pts,{color:'#111',weight:2}).addTo(map);
+        return;
+      }
+      if(relinkMode){
+        modeHint.textContent='Ищу ближайший контур…';
+        fetchOverpassPolygon({lon:e.latlng.lng,lat:e.latlng.lat}, 500).then(ring=>{
+          if(!ring){
+            modeHint.textContent='Не нашёл контур. Кликни ближе и повтори.';
+            return;
+          }
+          removePreview();
+          previewLayer = L.polygon(ringLonLat_to_LatLng(ring), { color:'#111', weight:2, fillColor:DEFAULT_BASE_COLOR, fillOpacity:.5 }).addTo(map);
+          map.fitBounds(previewLayer.getBounds().pad(0.2));
+          modeHint.textContent='Контур найден. Нажми «Сохранить».';
+        });
+      }
+    };
+
+    const mapDbl = ()=>{
+      if(drawMode){
+        stopDraw(true);
+        modeHint.textContent='Рисование отменено.';
+      }
+    };
+
+    map.on('click', mapClick);
+    map.on('dblclick', mapDbl);
+
+    state.baseEditorCleanup = ()=>{
+      map.off('click', mapClick);
+      map.off('dblclick', mapDbl);
+      removeDrawLayer();
+      removePreview();
+      container.classList.remove('open');
+      container.innerHTML='';
+    };
+  }
+
   // --- Список базы
   function renderBaseList(){
-    const host=$('itemsList'); host.innerHTML='';
+    const host=$('itemsList');
+    cleanupBaseEditor({preserveEditingId:true});
+    host.innerHTML='';
     const filtered = state.db.items.filter(it =>
       (state.cityFilter.size===0 || state.cityFilter.has((it.city||'').trim().toLowerCase())) &&
       (!state.searchQuery || norm(`${it.city} ${it.title}`).includes(norm(state.searchQuery)))
@@ -900,6 +1107,15 @@
       btnShow.onclick = ()=>{ state.baseVisibleIds.add(it.id); applyBaseVisibility(); focusBaseItem(it.id, {scroll:true}); const cb=div.querySelector('.visToggle'); if(cb) cb.checked=true; };
       btnEdit.onclick = ()=> openBaseEditor(it.id);
       btnDel.onclick = ()=> deleteBaseItem(it.id);
+
+      const editor = document.createElement('div');
+      editor.className='inline-editor';
+      editor.dataset.editorFor = it.id;
+      div.appendChild(editor);
+
+      if(state.editingBaseId === it.id){
+        mountBaseEditor(it, editor);
+      }
 
       host.appendChild(div);
     });
@@ -1008,95 +1224,16 @@
   // --- Инлайн-редактор базы (relink/draw)
   function openBaseEditor(id){
     const it = state.db.items.find(x=>x.id===id); if(!it) return;
-    const host = $('editPanel'); host.style.display=''; host.innerHTML='';
-    if(host._cleanup) try{ host._cleanup(); }catch(_){}
-    const div=document.createElement('div');
-    div.innerHTML = `
-      <div class="title" style="margin-bottom:6px;">Редактирование адреса</div>
-      <div class="inline-row">
-        <div>
-          <div class="label">Название</div>
-          <input id="eTitle" type="text" value="${esc(it.title||'')}" />
-        </div>
-        <div>
-          <div class="label">Город</div>
-          <input id="eCity" type="text" value="${esc(it.city||'')}" />
-        </div>
-      </div>
-      <div class="inline-actions" style="margin-top:6px;">
-        <button id="btnRelink" class="ghost">Привязать к OSM</button>
-        <button id="btnDraw" class="ghost">Нарисовать вручную</button>
-        <button id="btnDrawFinish" class="ghost" style="display:none;">Завершить рисование</button>
-        <button id="btnDrawUndo" class="ghost" style="display:none;">Отменить точку</button>
-        <button id="btnClearPoly" class="ghost">Удалить полигон</button>
-      </div>
-      <div class="inline-footer">
-        <button id="btnSaveBase" class="primary">Сохранить</button>
-        <button id="btnCancelBase" class="ghost">Отмена</button>
-        <span id="editMsg" class="muted"></span>
-      </div>
-      <div id="modeHint" class="hint" style="margin-top:6px;"></div>
-    `;
-    host.appendChild(div);
-
-    const eTitle=$('eTitle'), eCity=$('eCity'), modeHint=$('modeHint');
-    const btnRelink=$('btnRelink'), btnDraw=$('btnDraw'), btnDrawFinish=$('btnDrawFinish'), btnDrawUndo=$('btnDrawUndo'), btnClearPoly=$('btnClearPoly');
-
     state.selectedBaseId=id;
-    let drawMode=false, drawPoints=[], drawLayer=null, previewLayer=null, relinkMode=false;
-
-    function stopRelink(){ relinkMode=false; if(previewLayer){ map.removeLayer(previewLayer); previewLayer=null; } }
-    function startDraw(){ drawMode=true; drawPoints=[]; if(drawLayer){ map.removeLayer(drawLayer); drawLayer=null; } btnDrawFinish.style.display=''; btnDrawUndo.style.display=''; modeHint.textContent='Кликай по карте, ставь точки. «Завершить рисование» — чтобы сформировать полигон.'; }
-    function stopDraw(clear){
-      drawMode=false; btnDrawFinish.style.display='none'; btnDrawUndo.style.display='none'; if(clear){ drawPoints=[]; if(drawLayer){ map.removeLayer(drawLayer); drawLayer=null; } }
-    }
-
-    btnRelink.onclick = ()=>{ stopDraw(true); relinkMode=true; modeHint.textContent='Кликни на карте рядом со зданием — найдём ближайший контур (OSM).'; };
-    btnDraw.onclick = ()=>{ stopRelink(); startDraw(); };
-    btnDrawFinish.onclick = ()=>{
-      if(drawPoints.length<3) return alert('Нужно минимум 3 точки.');
-      if(previewLayer){ map.removeLayer(previewLayer); previewLayer=null; }
-      previewLayer = L.polygon(drawPoints, { color:'#111', weight:2, fillColor:DEFAULT_BASE_COLOR, fillOpacity:.5 }).addTo(map);
-      stopDraw(false); modeHint.textContent='Контур нарисован. Нажми «Сохранить».';
-    };
-    btnDrawUndo.onclick = ()=>{ drawPoints.pop(); if(drawLayer){ map.removeLayer(drawLayer); drawLayer=null; } if(drawPoints.length){ const pts=drawPoints.slice(); if(pts.length>=3) pts.push(pts[0]); drawLayer=L.polyline(pts,{color:'#111',weight:2}).addTo(map); } };
-    btnClearPoly.onclick = ()=>{ it.polygon=null; state.db.updated_at=new Date().toISOString(); applyBaseVisibility(); renderBaseList(); $('editMsg').textContent='Полигон удалён (локально).'; };
-
-    $('btnSaveBase').onclick = async ()=>{
-      it.title = eTitle.value.trim(); it.city = eCity.value.trim();
-      if(previewLayer){ const ring = previewLayer.getLatLngs()[0]; it.polygon = ringLatLng_to_LonLat(ring); }
-      state.db.updated_at = new Date().toISOString();
-      try{ const res = await saveDb(); $('editMsg').className='muted ok'; $('editMsg').textContent = res; $('editPanel').style.display='none'; renderBaseList(); applyBaseVisibility(); }
-      catch(err){ $('editMsg').className='muted dangerText'; $('editMsg').textContent = err.message; }
-    };
-    $('btnCancelBase').onclick = ()=>{ $('editPanel').style.display='none'; };
-
-    function mapClick(e){
-      if(drawMode){
-        drawPoints.push(e.latlng);
-        if(drawLayer){ map.removeLayer(drawLayer); drawLayer=null; }
-        const pts=drawPoints.slice(); if(pts.length>=3) pts.push(pts[0]);
-        drawLayer=L.polyline(pts,{color:'#111',weight:2}).addTo(map);
-        return;
-      }
-      if(relinkMode){
-        modeHint.textContent='Ищу ближайший контур…';
-        fetchOverpassPolygon({lon:e.latlng.lng,lat:e.latlng.lat}, 500).then(ring=>{
-          if(!ring){ modeHint.textContent='Не нашёл контур. Кликни ближе и повтори.'; return; }
-          if(previewLayer){ map.removeLayer(previewLayer); previewLayer=null; }
-          previewLayer = L.polygon(ringLonLat_to_LatLng(ring), { color:'#111', weight:2, fillColor:DEFAULT_BASE_COLOR, fillOpacity:.5 }).addTo(map);
-          map.fitBounds(previewLayer.getBounds().pad(0.2));
-          modeHint.textContent='Контур найден. Нажми «Сохранить».';
-        });
-      }
-    }
-    function mapDbl(){ if(drawMode){ stopDraw(true); modeHint.textContent='Рисование отменено.'; } }
-    map.on('click', mapClick); map.on('dblclick', mapDbl);
-    host._cleanup = ()=>{ map.off('click', mapClick); map.off('dblclick', mapDbl); };
+    state.editingBaseId=id;
+    renderBaseList();
+    const row = document.querySelector(`#itemsList .item[data-id=\"${CSS.escape(id)}\"]`);
+    if(row){ row.scrollIntoView({block:'center', behavior:'smooth'}); }
   }
   function deleteBaseItem(id){
     const it = state.db.items.find(x=>x.id===id); if(!it) return;
     if(!confirm(`Удалить адрес:\n\n${it.title || '(без названия)'}?`)) return;
+    if(state.editingBaseId===id){ cleanupBaseEditor(); }
     const layer = state.features.get(id); if(layer && map.hasLayer(layer)) map.removeLayer(layer);
     state.features.delete(id); state.baseVisibleIds.delete(id);
     state.db.items = state.db.items.filter(x=>x.id!==id);
