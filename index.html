@@ -306,6 +306,7 @@
     db: {version:1, updated_at:new Date().toISOString(), items:[]},
     dbSources: [],
     dbSourceById: new Map(),
+    dbSourceIndex: new Map(),
     features: new Map(),
     labels: [],
     selectedBaseId: null,
@@ -782,7 +783,76 @@
     if(!latestTs){
       combined.updated_at = new Date().toISOString();
     }
+    state.dbSourceIndex = new Map();
+    state.dbSources.forEach(src=> state.dbSourceIndex.set(src.key, src));
     return combined;
+  }
+
+  function getDbSourceDisplayName(source){
+    if(!source) return '';
+    if(source.label) return String(source.label);
+    if(source.spec && source.spec.path) return String(source.spec.path);
+    if(source.key) return String(source.key);
+    return '';
+  }
+  function getDbSourceLookupName(source){
+    return getDbSourceDisplayName(source).toLowerCase();
+  }
+  function getDbSourceFileName(source){
+    const display = getDbSourceDisplayName(source) || 'database.json';
+    const parts = display.split('/');
+    const last = parts[parts.length-1] || parts[parts.length-2];
+    return (last || 'database.json').trim() || 'database.json';
+  }
+  function guessDbSourceKeyForItem(item){
+    if(!item || !state.dbSources.length) return state.dbSources[0]?.key || null;
+    const city = String(item.city || '').trim().toLowerCase();
+    const findBy = (predicate)=> state.dbSources.find(src=> predicate(getDbSourceLookupName(src)));
+    if(city){
+      const direct = findBy(name=> name.includes(city));
+      if(direct) return direct.key;
+    }
+    if(city.includes('энгельс')){
+      const eng = findBy(name=> name.includes('eng') || name.includes('энг'));
+      if(eng) return eng.key;
+    }
+    if(city.includes('саратов')){
+      const sar = findBy(name=> name.includes('sar') || name.includes('сарат'));
+      if(sar) return sar.key;
+    }
+    if(city){
+      const compact = city.replace(/\s+/g,'');
+      const alt = findBy(name=> name.includes(compact));
+      if(alt) return alt.key;
+    }
+    return state.dbSources[0]?.key || null;
+  }
+  function ensureItemSourceKey(item){
+    if(!item) return state.dbSources[0]?.key || null;
+    let key = state.dbSourceById.get(item.id);
+    if(!key || !state.dbSourceIndex.has(key)){
+      key = guessDbSourceKeyForItem(item);
+      if(key){
+        state.dbSourceById.set(item.id, key);
+      }
+    }
+    return key;
+  }
+  function refreshDbSourceStats(){
+    state.dbSourceIndex = new Map();
+    state.dbSources.forEach(src=>{
+      state.dbSourceIndex.set(src.key, src);
+      src.count = 0;
+    });
+    const validIds = new Set(state.db.items.map(it=> it.id));
+    Array.from(state.dbSourceById.keys()).forEach(id=>{
+      if(!validIds.has(id)) state.dbSourceById.delete(id);
+    });
+    state.db.items.forEach(item=>{
+      const key = ensureItemSourceKey(item);
+      const source = key ? state.dbSourceIndex.get(key) : null;
+      if(source) source.count += 1;
+    });
   }
   async function loadGitHubDatabases(specs){
     const segments = [];
@@ -832,6 +902,7 @@
     const r = await fetch(bust, { cache:'no-store', headers:{'Accept':'application/json'} });
     if(!r.ok) throw new Error('HTTP '+r.status);
     state.db = normalizeDb(await r.json());
+    refreshDbSourceStats();
     state.baseVisibleIds = new Set(state.db.items.map(x=>x.id));
     renderCityChips();
     renderBaseList();
@@ -1004,6 +1075,8 @@
         it.polygon = ringLatLng_to_LonLat(ring);
       }
       state.db.updated_at = new Date().toISOString();
+      ensureItemSourceKey(it);
+      refreshDbSourceStats();
       try{
         const res = await saveDb();
         cleanupBaseEditor();
@@ -1218,7 +1291,10 @@
   // --- Добавить адрес
   $('btnAddBase').onclick = ()=>{
     const id = uid(); const it = { id, title:'Новый адрес', city:'', polygon:null };
-    state.db.items.push(it); state.baseVisibleIds.add(id); state.selectedBaseId=id; openBaseEditor(id);
+    state.db.items.push(it);
+    ensureItemSourceKey(it);
+    refreshDbSourceStats();
+    state.baseVisibleIds.add(id); state.selectedBaseId=id; openBaseEditor(id);
   };
 
   // --- Инлайн-редактор базы (relink/draw)
@@ -1237,6 +1313,8 @@
     const layer = state.features.get(id); if(layer && map.hasLayer(layer)) map.removeLayer(layer);
     state.features.delete(id); state.baseVisibleIds.delete(id);
     state.db.items = state.db.items.filter(x=>x.id!==id);
+    state.dbSourceById.delete(id);
+    refreshDbSourceStats();
     state.db.updated_at=new Date().toISOString();
     saveDb().then(msg=>{ $('loadMsg').textContent=`Удалено. ${msg}`; $('loadMsg').className='muted ok'; renderBaseList(); applyBaseVisibility(); })
              .catch(err=>{ $('loadMsg').textContent=`Удалено локально. Ошибка сохранения: ${err.message}`; $('loadMsg').className='muted dangerText'; renderBaseList(); applyBaseVisibility(); });
@@ -1279,7 +1357,10 @@
     const house = sg.address?.house_number || '';
     const title = ['г. '+(city||'').trim(), road && ('ул. '+road), house].filter(Boolean).join(', ').replace(/\s+,/g,',');
     const id = uid(); const it = { id, title: title || sg.display_name, city: city || '', polygon: null };
-    state.db.items.push(it); state.baseVisibleIds.add(id); state.selectedBaseId = id;
+    state.db.items.push(it);
+    ensureItemSourceKey(it);
+    refreshDbSourceStats();
+    state.baseVisibleIds.add(id); state.selectedBaseId = id;
     try{ const ring = await fetchOverpassPolygon({lon:+sg.lon, lat:+sg.lat}, 400); if(ring){ it.polygon = ring; } }catch(_){ }
     renderBaseList(); applyBaseVisibility(); const row = document.querySelector(`#itemsList .item[data-id="${CSS.escape(id)}"]`); row && row.scrollIntoView({block:'center', behavior:'smooth'});
   }
@@ -2723,6 +2804,7 @@
         nrdPromise.catch(e=>{ if(/404/.test(e.message||'')) return {orders: []}; throw e; })
       ]);
       state.db = normalizeDb(db);
+      refreshDbSourceStats();
       state.baseVisibleIds = new Set(state.db.items.map(x=>x.id));
       const N = normalizeNaryad(nrd);
       state.orders = N.orders;
@@ -2740,12 +2822,33 @@
     }
   })();
 
+  function downloadJsonFile(fileName, content){
+    const blob = new Blob([content], {type:'application/json;charset=utf-8'});
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = fileName;
+    link.click();
+    setTimeout(()=> URL.revokeObjectURL(link.href), 0);
+  }
+
   async function saveDb(){
-    const content = JSON.stringify({ ...state.db, updated_at:new Date().toISOString() }, null, 2);
+    const updatedAt = new Date().toISOString();
+    const version = state.db.version || 1;
+    state.db.updated_at = updatedAt;
+    const normalizedItems = state.db.items.map(it=>({
+      id: it.id,
+      title: it.title || '',
+      city: it.city || '',
+      polygon: Array.isArray(it.polygon) ? it.polygon : null
+    }));
+    refreshDbSourceStats();
+    const basePayload = { version, updated_at: updatedAt, items: normalizedItems };
+
     if(state.ghDb && state.ghDb.token && Array.isArray(state.ghDbSpecs) && state.ghDbSpecs.length>1){
       throw new Error('Сохранение в GitHub недоступно: база собрана из нескольких файлов. Редактируйте и загружайте их по отдельности, указывая один путь в #ghdb.');
     }
     if(state.ghDb && state.ghDb.token){
+      const content = JSON.stringify(basePayload, null, 2);
       let sha = await ghGetSha(state.ghDb);
       try{
         const res = await ghPut(state.ghDb, content, sha || undefined);
@@ -2759,9 +2862,65 @@
         throw e;
       }
     }
-    const blob = new Blob([content], {type:'application/json;charset=utf-8'});
-    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'database.json'; a.click(); URL.revokeObjectURL(a.href);
-    throw new Error('Скачан обновлённый database.json — замени его в репозитории.');
+
+    const localSources = state.dbSources.slice();
+    const fallbackSource = localSources[0] || null;
+    const fallbackKey = fallbackSource ? fallbackSource.key : null;
+
+    if(localSources.length <= 1){
+      const source = fallbackSource;
+      const fileName = getDbSourceFileName(source);
+      const content = JSON.stringify(basePayload, null, 2);
+      downloadJsonFile(fileName, content);
+      return `Скачан обновлённый ${fileName} — замените его в репозитории.`;
+    }
+
+    const grouped = new Map();
+    normalizedItems.forEach(item=>{
+      let key = state.dbSourceById.get(item.id) || fallbackKey;
+      if(key && !state.dbSourceIndex.has(key) && fallbackKey){
+        key = fallbackKey;
+        state.dbSourceById.set(item.id, key);
+      }
+      if(!key && fallbackKey){
+        key = fallbackKey;
+        state.dbSourceById.set(item.id, key);
+      }
+      if(!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key).push(item);
+    });
+
+    const downloaded = [];
+    const accounted = new Set();
+    localSources.forEach(source=>{
+      const key = source.key;
+      accounted.add(key);
+      const items = grouped.get(key) || [];
+      const payload = { version, updated_at: updatedAt, items };
+      const fileName = getDbSourceFileName(source);
+      downloadJsonFile(fileName, JSON.stringify(payload, null, 2));
+      downloaded.push(fileName);
+    });
+
+    grouped.forEach((items, key)=>{
+      if(accounted.has(key) || !items || !items.length) return;
+      const safeKey = String(key || 'extra').replace(/[^0-9a-zA-Zа-яА-Я_\-]+/g,'_');
+      const fileName = `database-${safeKey}.json`;
+      const payload = { version, updated_at: updatedAt, items };
+      downloadJsonFile(fileName, JSON.stringify(payload, null, 2));
+      downloaded.push(fileName);
+    });
+
+    if(!downloaded.length && fallbackSource){
+      const fileName = getDbSourceFileName(fallbackSource);
+      downloadJsonFile(fileName, JSON.stringify(basePayload, null, 2));
+      downloaded.push(fileName);
+    }
+
+    const summary = downloaded.length
+      ? `Скачаны обновлённые файлы: ${downloaded.join(', ')} — замените их в репозитории.`
+      : 'Скачан обновлённый database.json — замените его в репозитории.';
+    return summary;
   }
 
   // Подписи при движении/зуме
