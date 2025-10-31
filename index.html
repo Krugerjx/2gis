@@ -2844,10 +2844,12 @@
     refreshDbSourceStats();
     const basePayload = { version, updated_at: updatedAt, items: normalizedItems };
 
-    if(state.ghDb && state.ghDb.token && Array.isArray(state.ghDbSpecs) && state.ghDbSpecs.length>1){
-      throw new Error('Сохранение в GitHub недоступно: база собрана из нескольких файлов. Редактируйте и загружайте их по отдельности, указывая один путь в #ghdb.');
+    const ghMultiSource = Boolean(state.ghDb && state.ghDb.token && Array.isArray(state.ghDbSpecs) && state.ghDbSpecs.length>1);
+    const saveNotices = [];
+    if(ghMultiSource){
+      saveNotices.push('GitHub не обновлён: несколько файлов базы');
     }
-    if(state.ghDb && state.ghDb.token){
+    if(state.ghDb && state.ghDb.token && !ghMultiSource){
       const content = JSON.stringify(basePayload, null, 2);
       let sha = await ghGetSha(state.ghDb);
       try{
@@ -2872,7 +2874,8 @@
       const fileName = getDbSourceFileName(source);
       const content = JSON.stringify(basePayload, null, 2);
       downloadJsonFile(fileName, content);
-      return `Скачан обновлённый ${fileName} — замените его в репозитории.`;
+      const msg = `Скачан обновлённый ${fileName} — замените его в репозитории.`;
+      return saveNotices.length ? `${msg} (${saveNotices.join('; ')})` : msg;
     }
 
     const grouped = new Map();
@@ -2920,6 +2923,9 @@
     const summary = downloaded.length
       ? `Скачаны обновлённые файлы: ${downloaded.join(', ')} — замените их в репозитории.`
       : 'Скачан обновлённый database.json — замените его в репозитории.';
+    if(saveNotices.length){
+      return `${summary} (${saveNotices.join('; ')})`;
+    }
     return summary;
   }
 
