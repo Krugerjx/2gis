@@ -96,7 +96,7 @@
     .sg-title { font-weight:600; }
 
     /* Инлайн-редактор */
-    .inline-editor { grid-column: 1 / -1; background:#fff; border:1px solid #eee; border-radius:10px; padding:10px; display:none; }
+    .inline-editor { grid-column: 1 / -1; background:#fff; border:1px solid #eee; border-radius:10px; padding:10px; display:none; margin-top:8px; }
     .inline-editor.open { display:block; }
     .inline-row { display:grid; grid-template-columns: 1fr; gap:8px; }
     .inline-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:6px; }
@@ -182,9 +182,6 @@
       </div>
       <div id="ordersList" class="list" style="margin-top:8px;"></div>
     </div>
-
-    <!-- 🔧 Редактор адреса (контейнер для openBaseEditor) -->
-    <div class="panel" id="editPanel" style="display:none;"></div>
 
     <!-- 🔧 Редактор наряда -->
     <div class="panel" id="orderEditPanel" style="display:none;"></div>
@@ -309,6 +306,7 @@
     db: {version:1, updated_at:new Date().toISOString(), items:[]},
     dbSources: [],
     dbSourceById: new Map(),
+    dbSourceIndex: new Map(),
     features: new Map(),
     labels: [],
     selectedBaseId: null,
@@ -325,6 +323,8 @@
     orderLayers: new Map(),
     addrToOrder: new Map(),
     activeOrderId: null,
+    editingBaseId: null,
+    baseEditorCleanup: null,
 
     selection: new Set(),
     dragRect: null,
@@ -532,9 +532,6 @@
       const extrasParts = [];
       if(state.dbSources.length>1){
         extrasParts.push(`Файлы базы: ${state.dbSources.map(s=> s.label || (s.spec? s.spec.path : '')).filter(Boolean).join(', ')}`);
-      }
-      if(state.ghDbSpecs.length>1){
-        extrasParts.push('Сохранение GitHub отключено (несколько файлов)');
       }
       const extras = extrasParts.length ? ' • '+extrasParts.join(' • ') : '';
       el.textContent = `GitHub: ${base} | Наряды: ${nrd}${extras}`;
@@ -783,7 +780,76 @@
     if(!latestTs){
       combined.updated_at = new Date().toISOString();
     }
+    state.dbSourceIndex = new Map();
+    state.dbSources.forEach(src=> state.dbSourceIndex.set(src.key, src));
     return combined;
+  }
+
+  function getDbSourceDisplayName(source){
+    if(!source) return '';
+    if(source.label) return String(source.label);
+    if(source.spec && source.spec.path) return String(source.spec.path);
+    if(source.key) return String(source.key);
+    return '';
+  }
+  function getDbSourceLookupName(source){
+    return getDbSourceDisplayName(source).toLowerCase();
+  }
+  function getDbSourceFileName(source){
+    const display = getDbSourceDisplayName(source) || 'database.json';
+    const parts = display.split('/');
+    const last = parts[parts.length-1] || parts[parts.length-2];
+    return (last || 'database.json').trim() || 'database.json';
+  }
+  function guessDbSourceKeyForItem(item){
+    if(!item || !state.dbSources.length) return state.dbSources[0]?.key || null;
+    const city = String(item.city || '').trim().toLowerCase();
+    const findBy = (predicate)=> state.dbSources.find(src=> predicate(getDbSourceLookupName(src)));
+    if(city){
+      const direct = findBy(name=> name.includes(city));
+      if(direct) return direct.key;
+    }
+    if(city.includes('энгельс')){
+      const eng = findBy(name=> name.includes('eng') || name.includes('энг'));
+      if(eng) return eng.key;
+    }
+    if(city.includes('саратов')){
+      const sar = findBy(name=> name.includes('sar') || name.includes('сарат'));
+      if(sar) return sar.key;
+    }
+    if(city){
+      const compact = city.replace(/\s+/g,'');
+      const alt = findBy(name=> name.includes(compact));
+      if(alt) return alt.key;
+    }
+    return state.dbSources[0]?.key || null;
+  }
+  function ensureItemSourceKey(item){
+    if(!item) return state.dbSources[0]?.key || null;
+    let key = state.dbSourceById.get(item.id);
+    if(!key || !state.dbSourceIndex.has(key)){
+      key = guessDbSourceKeyForItem(item);
+      if(key){
+        state.dbSourceById.set(item.id, key);
+      }
+    }
+    return key;
+  }
+  function refreshDbSourceStats(){
+    state.dbSourceIndex = new Map();
+    state.dbSources.forEach(src=>{
+      state.dbSourceIndex.set(src.key, src);
+      src.count = 0;
+    });
+    const validIds = new Set(state.db.items.map(it=> it.id));
+    Array.from(state.dbSourceById.keys()).forEach(id=>{
+      if(!validIds.has(id)) state.dbSourceById.delete(id);
+    });
+    state.db.items.forEach(item=>{
+      const key = ensureItemSourceKey(item);
+      const source = key ? state.dbSourceIndex.get(key) : null;
+      if(source) source.count += 1;
+    });
   }
   async function loadGitHubDatabases(specs){
     const segments = [];
@@ -833,6 +899,7 @@
     const r = await fetch(bust, { cache:'no-store', headers:{'Accept':'application/json'} });
     if(!r.ok) throw new Error('HTTP '+r.status);
     state.db = normalizeDb(await r.json());
+    refreshDbSourceStats();
     state.baseVisibleIds = new Set(state.db.items.map(x=>x.id));
     renderCityChips();
     renderBaseList();
@@ -862,9 +929,219 @@
   window.addEventListener('keydown', (e)=>{ if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='k'){ e.preventDefault(); searchBox.focus(); searchBox.select(); }});
   function setSearch(v){ state.searchQuery=v; renderBaseList(); applyBaseVisibility(); if(state.searchMode==='global') debouncedNominatim(v); }
 
+  function cleanupBaseEditor({preserveEditingId=false}={}){
+    if(state.baseEditorCleanup){
+      try{ state.baseEditorCleanup(); }
+      catch(_){ }
+      state.baseEditorCleanup = null;
+    }
+    document.querySelectorAll('.inline-editor.open').forEach(el=>{
+      el.classList.remove('open');
+      el.innerHTML='';
+    });
+    if(!preserveEditingId){
+      state.editingBaseId = null;
+    }
+  }
+
+  function mountBaseEditor(it, container){
+    if(!container) return;
+    cleanupBaseEditor({preserveEditingId:true});
+    state.editingBaseId = it.id;
+
+    container.classList.add('open');
+    container.innerHTML = `
+      <div class="title" style="margin-bottom:6px;">Редактирование адреса</div>
+      <div class="inline-row">
+        <div>
+          <div class="label">Название</div>
+          <input type="text" data-role="title" value="${esc(it.title||'')}" />
+        </div>
+        <div>
+          <div class="label">Город</div>
+          <input type="text" data-role="city" value="${esc(it.city||'')}" />
+        </div>
+      </div>
+      <div class="inline-actions" style="margin-top:6px;">
+        <button class="ghost" data-role="relink">Привязать к OSM</button>
+        <button class="ghost" data-role="draw">Нарисовать вручную</button>
+        <button class="ghost" data-role="draw-finish" style="display:none;">Завершить рисование</button>
+        <button class="ghost" data-role="draw-undo" style="display:none;">Отменить точку</button>
+        <button class="ghost" data-role="clear-poly">Удалить полигон</button>
+      </div>
+      <div class="inline-footer">
+        <button class="primary" data-role="save">Сохранить</button>
+        <button class="ghost" data-role="cancel">Отмена</button>
+        <span class="muted" data-role="message"></span>
+      </div>
+      <div class="hint" data-role="hint" style="margin-top:6px;"></div>
+    `;
+
+    const eTitle = container.querySelector('[data-role="title"]');
+    const eCity = container.querySelector('[data-role="city"]');
+    const modeHint = container.querySelector('[data-role="hint"]');
+    const editMsg = container.querySelector('[data-role="message"]');
+    const btnRelink = container.querySelector('[data-role="relink"]');
+    const btnDraw = container.querySelector('[data-role="draw"]');
+    const btnDrawFinish = container.querySelector('[data-role="draw-finish"]');
+    const btnDrawUndo = container.querySelector('[data-role="draw-undo"]');
+    const btnClearPoly = container.querySelector('[data-role="clear-poly"]');
+    const btnSave = container.querySelector('[data-role="save"]');
+    const btnCancel = container.querySelector('[data-role="cancel"]');
+
+    let drawMode=false, drawPoints=[], drawLayer=null, previewLayer=null, relinkMode=false;
+
+    function removePreview(){
+      if(previewLayer){ map.removeLayer(previewLayer); previewLayer=null; }
+    }
+
+    function removeDrawLayer(){
+      if(drawLayer){ map.removeLayer(drawLayer); drawLayer=null; }
+    }
+
+    function stopRelink(){
+      relinkMode=false;
+      removePreview();
+    }
+
+    function startDraw(){
+      drawMode=true;
+      drawPoints=[];
+      removeDrawLayer();
+      btnDrawFinish.style.display='';
+      btnDrawUndo.style.display='';
+      modeHint.textContent='Кликай по карте, ставь точки. «Завершить рисование» — чтобы сформировать полигон.';
+    }
+
+    function stopDraw(clear){
+      drawMode=false;
+      btnDrawFinish.style.display='none';
+      btnDrawUndo.style.display='none';
+      if(clear){
+        drawPoints=[];
+        removeDrawLayer();
+      }
+    }
+
+    btnRelink.onclick = ()=>{
+      stopDraw(true);
+      relinkMode=true;
+      modeHint.textContent='Кликни на карте рядом со зданием — найдём ближайший контур (OSM).';
+    };
+
+    btnDraw.onclick = ()=>{
+      stopRelink();
+      startDraw();
+    };
+
+    btnDrawFinish.onclick = ()=>{
+      if(drawPoints.length<3) return alert('Нужно минимум 3 точки.');
+      removePreview();
+      previewLayer = L.polygon(drawPoints, { color:'#111', weight:2, fillColor:DEFAULT_BASE_COLOR, fillOpacity:.5 }).addTo(map);
+      stopDraw(false);
+      modeHint.textContent='Контур нарисован. Нажми «Сохранить».';
+    };
+
+    btnDrawUndo.onclick = ()=>{
+      drawPoints.pop();
+      removeDrawLayer();
+      if(drawPoints.length){
+        const pts = drawPoints.slice();
+        if(pts.length>=3) pts.push(pts[0]);
+        drawLayer = L.polyline(pts,{color:'#111',weight:2}).addTo(map);
+      }
+    };
+
+    btnClearPoly.onclick = ()=>{
+      it.polygon=null;
+      state.db.updated_at=new Date().toISOString();
+      applyBaseVisibility();
+      renderBaseList();
+      const editor = document.querySelector(`.inline-editor[data-editor-for="${CSS.escape(it.id)}"]`);
+      if(editor){
+        const msg = editor.querySelector('[data-role="message"]');
+        if(msg){ msg.className='muted'; msg.textContent='Полигон удалён (локально).'; }
+      }
+    };
+
+    btnSave.onclick = async ()=>{
+      it.title = eTitle.value.trim();
+      it.city = eCity.value.trim();
+      if(previewLayer){
+        const ring = previewLayer.getLatLngs()[0];
+        it.polygon = ringLatLng_to_LonLat(ring);
+      }
+      state.db.updated_at = new Date().toISOString();
+      ensureItemSourceKey(it);
+      refreshDbSourceStats();
+      try{
+        const res = await saveDb();
+        cleanupBaseEditor();
+        renderBaseList();
+        applyBaseVisibility();
+        $('loadMsg').textContent = res;
+        $('loadMsg').className = 'muted ok';
+      }
+      catch(err){
+        editMsg.className='muted dangerText';
+        editMsg.textContent = err.message;
+      }
+    };
+
+    btnCancel.onclick = ()=>{
+      cleanupBaseEditor();
+      renderBaseList();
+    };
+
+    const mapClick = (e)=>{
+      if(drawMode){
+        drawPoints.push(e.latlng);
+        removeDrawLayer();
+        const pts = drawPoints.slice();
+        if(pts.length>=3) pts.push(pts[0]);
+        drawLayer = L.polyline(pts,{color:'#111',weight:2}).addTo(map);
+        return;
+      }
+      if(relinkMode){
+        modeHint.textContent='Ищу ближайший контур…';
+        fetchOverpassPolygon({lon:e.latlng.lng,lat:e.latlng.lat}, 500).then(ring=>{
+          if(!ring){
+            modeHint.textContent='Не нашёл контур. Кликни ближе и повтори.';
+            return;
+          }
+          removePreview();
+          previewLayer = L.polygon(ringLonLat_to_LatLng(ring), { color:'#111', weight:2, fillColor:DEFAULT_BASE_COLOR, fillOpacity:.5 }).addTo(map);
+          map.fitBounds(previewLayer.getBounds().pad(0.2));
+          modeHint.textContent='Контур найден. Нажми «Сохранить».';
+        });
+      }
+    };
+
+    const mapDbl = ()=>{
+      if(drawMode){
+        stopDraw(true);
+        modeHint.textContent='Рисование отменено.';
+      }
+    };
+
+    map.on('click', mapClick);
+    map.on('dblclick', mapDbl);
+
+    state.baseEditorCleanup = ()=>{
+      map.off('click', mapClick);
+      map.off('dblclick', mapDbl);
+      removeDrawLayer();
+      removePreview();
+      container.classList.remove('open');
+      container.innerHTML='';
+    };
+  }
+
   // --- Список базы
   function renderBaseList(){
-    const host=$('itemsList'); host.innerHTML='';
+    const host=$('itemsList');
+    cleanupBaseEditor({preserveEditingId:true});
+    host.innerHTML='';
     const filtered = state.db.items.filter(it =>
       (state.cityFilter.size===0 || state.cityFilter.has((it.city||'').trim().toLowerCase())) &&
       (!state.searchQuery || norm(`${it.city} ${it.title}`).includes(norm(state.searchQuery)))
@@ -900,6 +1177,15 @@
       btnShow.onclick = ()=>{ state.baseVisibleIds.add(it.id); applyBaseVisibility(); focusBaseItem(it.id, {scroll:true}); const cb=div.querySelector('.visToggle'); if(cb) cb.checked=true; };
       btnEdit.onclick = ()=> openBaseEditor(it.id);
       btnDel.onclick = ()=> deleteBaseItem(it.id);
+
+      const editor = document.createElement('div');
+      editor.className='inline-editor';
+      editor.dataset.editorFor = it.id;
+      div.appendChild(editor);
+
+      if(state.editingBaseId === it.id){
+        mountBaseEditor(it, editor);
+      }
 
       host.appendChild(div);
     });
@@ -1002,104 +1288,30 @@
   // --- Добавить адрес
   $('btnAddBase').onclick = ()=>{
     const id = uid(); const it = { id, title:'Новый адрес', city:'', polygon:null };
-    state.db.items.push(it); state.baseVisibleIds.add(id); state.selectedBaseId=id; openBaseEditor(id);
+    state.db.items.push(it);
+    ensureItemSourceKey(it);
+    refreshDbSourceStats();
+    state.baseVisibleIds.add(id); state.selectedBaseId=id; openBaseEditor(id);
   };
 
   // --- Инлайн-редактор базы (relink/draw)
   function openBaseEditor(id){
     const it = state.db.items.find(x=>x.id===id); if(!it) return;
-    const host = $('editPanel'); host.style.display=''; host.innerHTML='';
-    if(host._cleanup) try{ host._cleanup(); }catch(_){}
-    const div=document.createElement('div');
-    div.innerHTML = `
-      <div class="title" style="margin-bottom:6px;">Редактирование адреса</div>
-      <div class="inline-row">
-        <div>
-          <div class="label">Название</div>
-          <input id="eTitle" type="text" value="${esc(it.title||'')}" />
-        </div>
-        <div>
-          <div class="label">Город</div>
-          <input id="eCity" type="text" value="${esc(it.city||'')}" />
-        </div>
-      </div>
-      <div class="inline-actions" style="margin-top:6px;">
-        <button id="btnRelink" class="ghost">Привязать к OSM</button>
-        <button id="btnDraw" class="ghost">Нарисовать вручную</button>
-        <button id="btnDrawFinish" class="ghost" style="display:none;">Завершить рисование</button>
-        <button id="btnDrawUndo" class="ghost" style="display:none;">Отменить точку</button>
-        <button id="btnClearPoly" class="ghost">Удалить полигон</button>
-      </div>
-      <div class="inline-footer">
-        <button id="btnSaveBase" class="primary">Сохранить</button>
-        <button id="btnCancelBase" class="ghost">Отмена</button>
-        <span id="editMsg" class="muted"></span>
-      </div>
-      <div id="modeHint" class="hint" style="margin-top:6px;"></div>
-    `;
-    host.appendChild(div);
-
-    const eTitle=$('eTitle'), eCity=$('eCity'), modeHint=$('modeHint');
-    const btnRelink=$('btnRelink'), btnDraw=$('btnDraw'), btnDrawFinish=$('btnDrawFinish'), btnDrawUndo=$('btnDrawUndo'), btnClearPoly=$('btnClearPoly');
-
     state.selectedBaseId=id;
-    let drawMode=false, drawPoints=[], drawLayer=null, previewLayer=null, relinkMode=false;
-
-    function stopRelink(){ relinkMode=false; if(previewLayer){ map.removeLayer(previewLayer); previewLayer=null; } }
-    function startDraw(){ drawMode=true; drawPoints=[]; if(drawLayer){ map.removeLayer(drawLayer); drawLayer=null; } btnDrawFinish.style.display=''; btnDrawUndo.style.display=''; modeHint.textContent='Кликай по карте, ставь точки. «Завершить рисование» — чтобы сформировать полигон.'; }
-    function stopDraw(clear){
-      drawMode=false; btnDrawFinish.style.display='none'; btnDrawUndo.style.display='none'; if(clear){ drawPoints=[]; if(drawLayer){ map.removeLayer(drawLayer); drawLayer=null; } }
-    }
-
-    btnRelink.onclick = ()=>{ stopDraw(true); relinkMode=true; modeHint.textContent='Кликни на карте рядом со зданием — найдём ближайший контур (OSM).'; };
-    btnDraw.onclick = ()=>{ stopRelink(); startDraw(); };
-    btnDrawFinish.onclick = ()=>{
-      if(drawPoints.length<3) return alert('Нужно минимум 3 точки.');
-      if(previewLayer){ map.removeLayer(previewLayer); previewLayer=null; }
-      previewLayer = L.polygon(drawPoints, { color:'#111', weight:2, fillColor:DEFAULT_BASE_COLOR, fillOpacity:.5 }).addTo(map);
-      stopDraw(false); modeHint.textContent='Контур нарисован. Нажми «Сохранить».';
-    };
-    btnDrawUndo.onclick = ()=>{ drawPoints.pop(); if(drawLayer){ map.removeLayer(drawLayer); drawLayer=null; } if(drawPoints.length){ const pts=drawPoints.slice(); if(pts.length>=3) pts.push(pts[0]); drawLayer=L.polyline(pts,{color:'#111',weight:2}).addTo(map); } };
-    btnClearPoly.onclick = ()=>{ it.polygon=null; state.db.updated_at=new Date().toISOString(); applyBaseVisibility(); renderBaseList(); $('editMsg').textContent='Полигон удалён (локально).'; };
-
-    $('btnSaveBase').onclick = async ()=>{
-      it.title = eTitle.value.trim(); it.city = eCity.value.trim();
-      if(previewLayer){ const ring = previewLayer.getLatLngs()[0]; it.polygon = ringLatLng_to_LonLat(ring); }
-      state.db.updated_at = new Date().toISOString();
-      try{ const res = await saveDb(); $('editMsg').className='muted ok'; $('editMsg').textContent = res; $('editPanel').style.display='none'; renderBaseList(); applyBaseVisibility(); }
-      catch(err){ $('editMsg').className='muted dangerText'; $('editMsg').textContent = err.message; }
-    };
-    $('btnCancelBase').onclick = ()=>{ $('editPanel').style.display='none'; };
-
-    function mapClick(e){
-      if(drawMode){
-        drawPoints.push(e.latlng);
-        if(drawLayer){ map.removeLayer(drawLayer); drawLayer=null; }
-        const pts=drawPoints.slice(); if(pts.length>=3) pts.push(pts[0]);
-        drawLayer=L.polyline(pts,{color:'#111',weight:2}).addTo(map);
-        return;
-      }
-      if(relinkMode){
-        modeHint.textContent='Ищу ближайший контур…';
-        fetchOverpassPolygon({lon:e.latlng.lng,lat:e.latlng.lat}, 500).then(ring=>{
-          if(!ring){ modeHint.textContent='Не нашёл контур. Кликни ближе и повтори.'; return; }
-          if(previewLayer){ map.removeLayer(previewLayer); previewLayer=null; }
-          previewLayer = L.polygon(ringLonLat_to_LatLng(ring), { color:'#111', weight:2, fillColor:DEFAULT_BASE_COLOR, fillOpacity:.5 }).addTo(map);
-          map.fitBounds(previewLayer.getBounds().pad(0.2));
-          modeHint.textContent='Контур найден. Нажми «Сохранить».';
-        });
-      }
-    }
-    function mapDbl(){ if(drawMode){ stopDraw(true); modeHint.textContent='Рисование отменено.'; } }
-    map.on('click', mapClick); map.on('dblclick', mapDbl);
-    host._cleanup = ()=>{ map.off('click', mapClick); map.off('dblclick', mapDbl); };
+    state.editingBaseId=id;
+    renderBaseList();
+    const row = document.querySelector(`#itemsList .item[data-id=\"${CSS.escape(id)}\"]`);
+    if(row){ row.scrollIntoView({block:'center', behavior:'smooth'}); }
   }
   function deleteBaseItem(id){
     const it = state.db.items.find(x=>x.id===id); if(!it) return;
     if(!confirm(`Удалить адрес:\n\n${it.title || '(без названия)'}?`)) return;
+    if(state.editingBaseId===id){ cleanupBaseEditor(); }
     const layer = state.features.get(id); if(layer && map.hasLayer(layer)) map.removeLayer(layer);
     state.features.delete(id); state.baseVisibleIds.delete(id);
     state.db.items = state.db.items.filter(x=>x.id!==id);
+    state.dbSourceById.delete(id);
+    refreshDbSourceStats();
     state.db.updated_at=new Date().toISOString();
     saveDb().then(msg=>{ $('loadMsg').textContent=`Удалено. ${msg}`; $('loadMsg').className='muted ok'; renderBaseList(); applyBaseVisibility(); })
              .catch(err=>{ $('loadMsg').textContent=`Удалено локально. Ошибка сохранения: ${err.message}`; $('loadMsg').className='muted dangerText'; renderBaseList(); applyBaseVisibility(); });
@@ -1142,7 +1354,10 @@
     const house = sg.address?.house_number || '';
     const title = ['г. '+(city||'').trim(), road && ('ул. '+road), house].filter(Boolean).join(', ').replace(/\s+,/g,',');
     const id = uid(); const it = { id, title: title || sg.display_name, city: city || '', polygon: null };
-    state.db.items.push(it); state.baseVisibleIds.add(id); state.selectedBaseId = id;
+    state.db.items.push(it);
+    ensureItemSourceKey(it);
+    refreshDbSourceStats();
+    state.baseVisibleIds.add(id); state.selectedBaseId = id;
     try{ const ring = await fetchOverpassPolygon({lon:+sg.lon, lat:+sg.lat}, 400); if(ring){ it.polygon = ring; } }catch(_){ }
     renderBaseList(); applyBaseVisibility(); const row = document.querySelector(`#itemsList .item[data-id="${CSS.escape(id)}"]`); row && row.scrollIntoView({block:'center', behavior:'smooth'});
   }
@@ -1508,7 +1723,7 @@
     return 0;
   }
 
-  let uploadRows=[]; // [{address, qty, foundId|null}]
+  let uploadRows=[]; // [{address, qty, foundId|null, hasPolygon:boolean}]
 
   fileInput.addEventListener('change', handleFile);
   btnClearUpload.onclick = ()=>{
@@ -1589,7 +1804,15 @@
       return;
     }
 
-    uploadRows = mapped.map(r=>({ address:r.address, qty:r.qty, foundId: matchAddressToBase(r.address) }));
+    uploadRows = mapped.map(r=>{
+      const foundId = matchAddressToBase(r.address);
+      let hasPolygon = false;
+      if(foundId){
+        const base = state.db.items.find(item=>item.id===foundId);
+        hasPolygon = !!(base && Array.isArray(base.polygon) && base.polygon.length>=3);
+      }
+      return { address:r.address, qty:r.qty, foundId, hasPolygon };
+    });
 
     const hits = uploadRows.filter(x=>x.foundId);
     const miss = uploadRows.filter(x=>!x.foundId);
@@ -1610,7 +1833,16 @@
     uploadRows.forEach((r,i)=>{
       const tr=document.createElement('tr');
       tr.className = r.foundId? 'hit' : 'miss';
-      tr.innerHTML = `<td>${i+1}</td><td>${esc(r.address)}</td><td>${r.qty}</td><td>${r.foundId? 'Найден в базе' : 'Не найден'}</td>`;
+      let status;
+      if(r.foundId){
+        const badge = r.hasPolygon
+          ? '<span class="ok">контур есть</span>'
+          : '<span class="dangerText">контура нет</span>';
+        status = `Найден в базе • ${badge}`;
+      } else {
+        status = 'Не найден';
+      }
+      tr.innerHTML = `<td>${i+1}</td><td>${esc(r.address)}</td><td>${r.qty}</td><td>${status}</td>`;
       tbody.appendChild(tr);
     });
     matchTable.appendChild(tbody);
@@ -2569,6 +2801,7 @@
         nrdPromise.catch(e=>{ if(/404/.test(e.message||'')) return {orders: []}; throw e; })
       ]);
       state.db = normalizeDb(db);
+      refreshDbSourceStats();
       state.baseVisibleIds = new Set(state.db.items.map(x=>x.id));
       const N = normalizeNaryad(nrd);
       state.orders = N.orders;
@@ -2586,28 +2819,182 @@
     }
   })();
 
+  function downloadJsonFile(fileName, content){
+    const blob = new Blob([content], {type:'application/json;charset=utf-8'});
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = fileName;
+    link.click();
+    setTimeout(()=> URL.revokeObjectURL(link.href), 0);
+  }
+
   async function saveDb(){
-    const content = JSON.stringify({ ...state.db, updated_at:new Date().toISOString() }, null, 2);
-    if(state.ghDb && state.ghDb.token && Array.isArray(state.ghDbSpecs) && state.ghDbSpecs.length>1){
-      throw new Error('Сохранение в GitHub недоступно: база собрана из нескольких файлов. Редактируйте и загружайте их по отдельности, указывая один путь в #ghdb.');
-    }
-    if(state.ghDb && state.ghDb.token){
-      let sha = await ghGetSha(state.ghDb);
+    const updatedAt = new Date().toISOString();
+    const version = state.db.version || 1;
+    state.db.updated_at = updatedAt;
+    const normalizedItems = state.db.items.map(it=>({
+      id: it.id,
+      title: it.title || '',
+      city: it.city || '',
+      polygon: Array.isArray(it.polygon) ? it.polygon : null
+    }));
+    refreshDbSourceStats();
+    const basePayload = { version, updated_at: updatedAt, items: normalizedItems };
+
+    const hasGhToken = Boolean(state.ghDb && state.ghDb.token);
+    const ghSpecsList = hasGhToken
+      ? (Array.isArray(state.ghDbSpecs) && state.ghDbSpecs.length ? state.ghDbSpecs : (state.ghDb ? [state.ghDb] : []))
+      : [];
+
+    if(hasGhToken && ghSpecsList.length === 1){
+      const targetSpec = { ...ghSpecsList[0], token: ghSpecsList[0].token || state.ghDb.token };
+      const content = JSON.stringify(basePayload, null, 2);
+      let sha = await ghGetSha(targetSpec);
       try{
-        const res = await ghPut(state.ghDb, content, sha || undefined);
-        return `Коммит ${res.commit?.sha?.slice(0,7)} в ${state.ghDb.repo}/${state.ghDb.branch}`;
+        const res = await ghPut(targetSpec, content, sha || undefined);
+        return `Коммит ${res.commit?.sha?.slice(0,7)} в ${targetSpec.repo}/${targetSpec.branch}`;
       }catch(e){
         if(e?._status===409){
-          sha = await ghGetSha(state.ghDb);
-          const res = await ghPut(state.ghDb, content, sha || undefined);
+          sha = await ghGetSha(targetSpec);
+          const res = await ghPut(targetSpec, content, sha || undefined);
           return `Коммит ${res.commit?.sha?.slice(0,7)} (sha обновлён)`;
         }
         throw e;
       }
     }
-    const blob = new Blob([content], {type:'application/json;charset=utf-8'});
-    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'database.json'; a.click(); URL.revokeObjectURL(a.href);
-    throw new Error('Скачан обновлённый database.json — замени его в репозитории.');
+
+    const sources = state.dbSources.slice();
+    const fallbackSource = sources[0] || null;
+    const fallbackKey = fallbackSource ? fallbackSource.key : null;
+
+    const grouped = new Map();
+    normalizedItems.forEach(item=>{
+      let key = state.dbSourceById.get(item.id) || fallbackKey;
+      if(key && !state.dbSourceIndex.has(key) && fallbackKey){
+        key = fallbackKey;
+        state.dbSourceById.set(item.id, key);
+      }
+      if(!key && fallbackKey){
+        key = fallbackKey;
+        state.dbSourceById.set(item.id, key);
+      }
+      if(!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key).push(item);
+    });
+
+    const makeFileName = (source, key)=>{
+      if(source){
+        return getDbSourceFileName(source);
+      }
+      if(key == null){
+        return 'database.json';
+      }
+      const safeKey = String(key || 'extra').replace(/[^0-9a-zA-Zа-яА-Я_\-]+/g,'_');
+      return `database-${safeKey}.json`;
+    };
+
+    if(hasGhToken && ghSpecsList.length > 1){
+      const formatSpecLabel = (spec)=>{
+        const repo = spec.repo || '';
+        const branch = spec.branch || '';
+        const path = spec.path || '';
+        if(repo && branch){
+          return `${repo}@${branch}:${path}`;
+        }
+        if(repo){
+          return `${repo}:${path}`;
+        }
+        return path || 'database.json';
+      };
+      const ghResults = [];
+      const handledKeys = new Set();
+      for(const source of sources){
+        const baseSpec = source?.spec;
+        if(!baseSpec) continue;
+        const spec = { ...baseSpec, token: baseSpec.token || state.ghDb.token };
+        const key = source.key;
+        const items = grouped.get(key) || [];
+        const payload = { version, updated_at: updatedAt, items };
+        const content = JSON.stringify(payload, null, 2);
+        let sha = await ghGetSha(spec);
+        try{
+          const res = await ghPut(spec, content, sha || undefined);
+          handledKeys.add(key);
+          const label = formatSpecLabel(spec);
+          const shaText = res.commit?.sha?.slice(0,7);
+          ghResults.push(shaText ? `${label} (#${shaText})` : label);
+          continue;
+        }catch(err){
+          if(err?._status===409){
+            sha = await ghGetSha(spec);
+            const res = await ghPut(spec, content, sha || undefined);
+            handledKeys.add(key);
+            const label = formatSpecLabel(spec);
+            const shaText = res.commit?.sha?.slice(0,7);
+            ghResults.push(shaText ? `${label} (#${shaText}) (sha обновлён)` : `${label} (sha обновлён)`);
+            continue;
+          }
+          throw err;
+        }
+      }
+
+      const downloaded = [];
+      grouped.forEach((items, key)=>{
+        if(!items.length || handledKeys.has(key)) return;
+        const source = sources.find(s=> s.key===key) || fallbackSource;
+        const payload = { version, updated_at: updatedAt, items };
+        const fileName = makeFileName(source, key);
+        downloadJsonFile(fileName, JSON.stringify(payload, null, 2));
+        downloaded.push(fileName);
+      });
+
+      const summaryParts = [];
+      if(ghResults.length){
+        summaryParts.push(`GitHub обновлён: ${ghResults.join(', ')}`);
+      }
+      if(downloaded.length){
+        summaryParts.push(`Скачаны файлы: ${downloaded.join(', ')} — замените их в репозитории.`);
+      }
+      return summaryParts.join(' • ') || 'Сохранение завершено.';
+    }
+
+    if(sources.length <= 1){
+      const fileName = makeFileName(fallbackSource, fallbackKey);
+      const content = JSON.stringify(basePayload, null, 2);
+      downloadJsonFile(fileName, content);
+      return `Скачан обновлённый ${fileName} — замените его в репозитории.`;
+    }
+
+    const downloaded = [];
+    const accounted = new Set();
+    sources.forEach(source=>{
+      const key = source.key;
+      accounted.add(key);
+      const items = grouped.get(key) || [];
+      const payload = { version, updated_at: updatedAt, items };
+      const fileName = makeFileName(source, key);
+      downloadJsonFile(fileName, JSON.stringify(payload, null, 2));
+      downloaded.push(fileName);
+    });
+
+    grouped.forEach((items, key)=>{
+      if(accounted.has(key) || !items || !items.length) return;
+      const payload = { version, updated_at: updatedAt, items };
+      const fileName = makeFileName(null, key);
+      downloadJsonFile(fileName, JSON.stringify(payload, null, 2));
+      downloaded.push(fileName);
+    });
+
+    if(!downloaded.length && fallbackSource){
+      const fileName = makeFileName(fallbackSource, fallbackKey);
+      downloadJsonFile(fileName, JSON.stringify(basePayload, null, 2));
+      downloaded.push(fileName);
+    }
+
+    const summary = downloaded.length
+      ? `Скачаны обновлённые файлы: ${downloaded.join(', ')} — замените их в репозитории.`
+      : 'Скачан обновлённый database.json — замените его в репозитории.';
+    return summary;
   }
 
   // Подписи при движении/зуме
