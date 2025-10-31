@@ -533,9 +533,6 @@
       if(state.dbSources.length>1){
         extrasParts.push(`Файлы базы: ${state.dbSources.map(s=> s.label || (s.spec? s.spec.path : '')).filter(Boolean).join(', ')}`);
       }
-      if(state.ghDbSpecs.length>1){
-        extrasParts.push('Сохранение GitHub отключено (несколько файлов)');
-      }
       const extras = extrasParts.length ? ' • '+extrasParts.join(' • ') : '';
       el.textContent = `GitHub: ${base} | Наряды: ${nrd}${extras}`;
     }else{
@@ -2844,39 +2841,31 @@
     refreshDbSourceStats();
     const basePayload = { version, updated_at: updatedAt, items: normalizedItems };
 
-    const ghMultiSource = Boolean(state.ghDb && state.ghDb.token && Array.isArray(state.ghDbSpecs) && state.ghDbSpecs.length>1);
-    const saveNotices = [];
-    if(ghMultiSource){
-      saveNotices.push('GitHub не обновлён: несколько файлов базы');
-    }
-    if(state.ghDb && state.ghDb.token && !ghMultiSource){
+    const hasGhToken = Boolean(state.ghDb && state.ghDb.token);
+    const ghSpecsList = hasGhToken
+      ? (Array.isArray(state.ghDbSpecs) && state.ghDbSpecs.length ? state.ghDbSpecs : (state.ghDb ? [state.ghDb] : []))
+      : [];
+
+    if(hasGhToken && ghSpecsList.length === 1){
+      const targetSpec = { ...ghSpecsList[0], token: ghSpecsList[0].token || state.ghDb.token };
       const content = JSON.stringify(basePayload, null, 2);
-      let sha = await ghGetSha(state.ghDb);
+      let sha = await ghGetSha(targetSpec);
       try{
-        const res = await ghPut(state.ghDb, content, sha || undefined);
-        return `Коммит ${res.commit?.sha?.slice(0,7)} в ${state.ghDb.repo}/${state.ghDb.branch}`;
+        const res = await ghPut(targetSpec, content, sha || undefined);
+        return `Коммит ${res.commit?.sha?.slice(0,7)} в ${targetSpec.repo}/${targetSpec.branch}`;
       }catch(e){
         if(e?._status===409){
-          sha = await ghGetSha(state.ghDb);
-          const res = await ghPut(state.ghDb, content, sha || undefined);
+          sha = await ghGetSha(targetSpec);
+          const res = await ghPut(targetSpec, content, sha || undefined);
           return `Коммит ${res.commit?.sha?.slice(0,7)} (sha обновлён)`;
         }
         throw e;
       }
     }
 
-    const localSources = state.dbSources.slice();
-    const fallbackSource = localSources[0] || null;
+    const sources = state.dbSources.slice();
+    const fallbackSource = sources[0] || null;
     const fallbackKey = fallbackSource ? fallbackSource.key : null;
-
-    if(localSources.length <= 1){
-      const source = fallbackSource;
-      const fileName = getDbSourceFileName(source);
-      const content = JSON.stringify(basePayload, null, 2);
-      downloadJsonFile(fileName, content);
-      const msg = `Скачан обновлённый ${fileName} — замените его в репозитории.`;
-      return saveNotices.length ? `${msg} (${saveNotices.join('; ')})` : msg;
-    }
 
     const grouped = new Map();
     normalizedItems.forEach(item=>{
@@ -2893,29 +2882,111 @@
       grouped.get(key).push(item);
     });
 
+    const makeFileName = (source, key)=>{
+      if(source){
+        return getDbSourceFileName(source);
+      }
+      if(key == null){
+        return 'database.json';
+      }
+      const safeKey = String(key || 'extra').replace(/[^0-9a-zA-Zа-яА-Я_\-]+/g,'_');
+      return `database-${safeKey}.json`;
+    };
+
+    if(hasGhToken && ghSpecsList.length > 1){
+      const formatSpecLabel = (spec)=>{
+        const repo = spec.repo || '';
+        const branch = spec.branch || '';
+        const path = spec.path || '';
+        if(repo && branch){
+          return `${repo}@${branch}:${path}`;
+        }
+        if(repo){
+          return `${repo}:${path}`;
+        }
+        return path || 'database.json';
+      };
+      const ghResults = [];
+      const handledKeys = new Set();
+      for(const source of sources){
+        const baseSpec = source?.spec;
+        if(!baseSpec) continue;
+        const spec = { ...baseSpec, token: baseSpec.token || state.ghDb.token };
+        const key = source.key;
+        const items = grouped.get(key) || [];
+        const payload = { version, updated_at: updatedAt, items };
+        const content = JSON.stringify(payload, null, 2);
+        let sha = await ghGetSha(spec);
+        try{
+          const res = await ghPut(spec, content, sha || undefined);
+          handledKeys.add(key);
+          const label = formatSpecLabel(spec);
+          const shaText = res.commit?.sha?.slice(0,7);
+          ghResults.push(shaText ? `${label} (#${shaText})` : label);
+          continue;
+        }catch(err){
+          if(err?._status===409){
+            sha = await ghGetSha(spec);
+            const res = await ghPut(spec, content, sha || undefined);
+            handledKeys.add(key);
+            const label = formatSpecLabel(spec);
+            const shaText = res.commit?.sha?.slice(0,7);
+            ghResults.push(shaText ? `${label} (#${shaText}) (sha обновлён)` : `${label} (sha обновлён)`);
+            continue;
+          }
+          throw err;
+        }
+      }
+
+      const downloaded = [];
+      grouped.forEach((items, key)=>{
+        if(!items.length || handledKeys.has(key)) return;
+        const source = sources.find(s=> s.key===key) || fallbackSource;
+        const payload = { version, updated_at: updatedAt, items };
+        const fileName = makeFileName(source, key);
+        downloadJsonFile(fileName, JSON.stringify(payload, null, 2));
+        downloaded.push(fileName);
+      });
+
+      const summaryParts = [];
+      if(ghResults.length){
+        summaryParts.push(`GitHub обновлён: ${ghResults.join(', ')}`);
+      }
+      if(downloaded.length){
+        summaryParts.push(`Скачаны файлы: ${downloaded.join(', ')} — замените их в репозитории.`);
+      }
+      return summaryParts.join(' • ') || 'Сохранение завершено.';
+    }
+
+    if(sources.length <= 1){
+      const fileName = makeFileName(fallbackSource, fallbackKey);
+      const content = JSON.stringify(basePayload, null, 2);
+      downloadJsonFile(fileName, content);
+      return `Скачан обновлённый ${fileName} — замените его в репозитории.`;
+    }
+
     const downloaded = [];
     const accounted = new Set();
-    localSources.forEach(source=>{
+    sources.forEach(source=>{
       const key = source.key;
       accounted.add(key);
       const items = grouped.get(key) || [];
       const payload = { version, updated_at: updatedAt, items };
-      const fileName = getDbSourceFileName(source);
+      const fileName = makeFileName(source, key);
       downloadJsonFile(fileName, JSON.stringify(payload, null, 2));
       downloaded.push(fileName);
     });
 
     grouped.forEach((items, key)=>{
       if(accounted.has(key) || !items || !items.length) return;
-      const safeKey = String(key || 'extra').replace(/[^0-9a-zA-Zа-яА-Я_\-]+/g,'_');
-      const fileName = `database-${safeKey}.json`;
       const payload = { version, updated_at: updatedAt, items };
+      const fileName = makeFileName(null, key);
       downloadJsonFile(fileName, JSON.stringify(payload, null, 2));
       downloaded.push(fileName);
     });
 
     if(!downloaded.length && fallbackSource){
-      const fileName = getDbSourceFileName(fallbackSource);
+      const fileName = makeFileName(fallbackSource, fallbackKey);
       downloadJsonFile(fileName, JSON.stringify(basePayload, null, 2));
       downloaded.push(fileName);
     }
@@ -2923,9 +2994,6 @@
     const summary = downloaded.length
       ? `Скачаны обновлённые файлы: ${downloaded.join(', ')} — замените их в репозитории.`
       : 'Скачан обновлённый database.json — замените его в репозитории.';
-    if(saveNotices.length){
-      return `${summary} (${saveNotices.join('; ')})`;
-    }
     return summary;
   }
 
