@@ -1,14 +1,5 @@
 {
   "version": 1,
-  "updated_at": "2025-11-06T11:45:22.579Z",
-  "orders": [
-    {
-      "id": "3dbe9917-39ed-40a5-adaa-5d0193cacc6a",
-      "code": "NRD-20251106-2665",
-      "company": "Новый заказчик",
-      "color": "#0EA5E9",
-      "items": [],
-      "created_at": "2025-11-06T11:45:22.577Z"
-    }
-  ]
+  "updated_at": "2025-11-06T12:12:25.889Z",
+  "orders": []
 }
