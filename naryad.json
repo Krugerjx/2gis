@@ -1,5 +1,59 @@
 {
   "version": 1,
-  "updated_at": "2025-11-07T12:22:40.525Z",
-  "orders": []
+  "updated_at": "2025-11-07T12:24:31.308Z",
+  "orders": [
+    {
+      "id": "70cebf32-bb2f-43e0-9387-f944aca94372",
+      "code": "NRD-20251107-5049",
+      "company": "Без названия",
+      "color": "#E00031",
+      "items": [
+        {
+          "id": "0fcd8c31-31f5-4950-a6e6-a3abef3afd54",
+          "qty": 4
+        },
+        {
+          "id": "99de0367-8e82-41b9-b1fb-89ab65e3b2dc",
+          "qty": 8
+        },
+        {
+          "id": "896b9f63-fcd1-44b3-a6b7-724dd4f21040",
+          "qty": 4
+        },
+        {
+          "id": "fab78196-fb07-4a1c-8217-d3b7633da3e0",
+          "qty": 2
+        },
+        {
+          "id": "02d1bba2-4ca3-4e20-ac99-2ea1816cb4c7",
+          "qty": 4
+        },
+        {
+          "id": "14b2b8e7-04a7-49b4-bd14-b135a8911d63",
+          "qty": 3
+        },
+        {
+          "id": "bb2dce9a-7307-4b0d-ac31-cea82ed75488",
+          "qty": 2
+        },
+        {
+          "id": "b52b163d-b49a-4b7b-a386-244c769a2f27",
+          "qty": 3
+        },
+        {
+          "id": "5804d1c1-f8c4-4fd1-bd3b-91acf6c02271",
+          "qty": 4
+        },
+        {
+          "id": "35aaa051-b0e2-4edb-bb05-61d374cf6d2c",
+          "qty": 4
+        },
+        {
+          "id": "03dfae8d-9897-4ae8-84bf-ba245e065a17",
+          "qty": 4
+        }
+      ],
+      "created_at": "2025-11-07T12:22:54.659Z"
+    }
+  ]
 }
