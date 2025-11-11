@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2025-11-11T12:12:17.531Z",
+  "updated_at": "2025-11-11T12:15:10.620Z",
   "items": [
     {
       "id": "80ff3d30-1c7a-4b33-9662-71b9b7ff11a8",
@@ -13829,7 +13829,7 @@
       "id": "de63cda0-b5a4-443d-bbe6-46b63dd4f20f",
       "title": "г. Энгельс, М. Расковой, 8а",
       "city": "Энгельс",
-      "polygon": []
+      "polygon": null
     },
     {
       "id": "d60b19d8-b27c-49a0-abdc-7dcb4b8fd5b5",
