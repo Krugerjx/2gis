@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2025-12-01T11:09:40.906Z",
+  "updated_at": "2025-12-01T11:15:19.844Z",
   "orders": [
     {
       "id": "e8145e75-d070-4fb8-a74b-83b047c204d5",
@@ -122,10 +122,6 @@
       "company": "мтс тех",
       "color": "#E21D1D",
       "items": [
-        {
-          "id": "bfd49f71-a918-4cee-a0fa-84b234b08404",
-          "qty": 8
-        },
         {
           "id": "896d8ec7-e98c-460e-830b-bc632ab66ae6",
           "qty": 4
