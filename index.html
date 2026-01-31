@@ -1,0 +1,3009 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Карта монтажа — База + Наряды (Leaflet, GitHub JSON)</title>
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <!-- SheetJS (XLSX/CSV) -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <!-- html2canvas (снимок карты) -->
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <!-- ExcelJS (XLSX со стилями) -->
+  <script src="https://cdn.jsdelivr.net/npm/exceljs@4.3.0/dist/exceljs.min.js"></script>
+
+  <style>
+    :root { --sidebar-width: 560px; }
+    html, body { height:100%; margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; }
+    body { position:relative; }
+    #app { display:grid; grid-template-columns: var(--sidebar-width) 1fr; height:100%; transition: grid-template-columns .28s ease; }
+    #sidebar { padding:14px; border-right:1px solid #eee; overflow:auto; transition: opacity .28s ease; min-width:0; }
+    body.sidebar-collapsed #app { grid-template-columns: 0 1fr; }
+    body.sidebar-collapsed #sidebar { opacity:0; pointer-events:none; border-right:none; }
+    .sidebar-toggle { position:fixed; top:16px; left:calc(16px + var(--sidebar-width)); z-index:1200; padding:6px; border-radius:50%; border:1px solid #d0d5dd; background:#fff; box-shadow:0 10px 30px rgba(15,23,42,.08); width:38px; height:38px; display:flex; align-items:center; justify-content:center; cursor:pointer; }
+    body.sidebar-collapsed .sidebar-toggle { left:16px; }
+    .sidebar-toggle svg { width:18px; height:18px; }
+    #map { width:100%; height:100%; }
+
+    .title { font-weight:700; }
+    .muted { color:#667085; font-size:13px; }
+    .panel { background:#fafafa; border:1px solid #eaeaea; border-radius:12px; padding:12px; margin-bottom:12px; }
+    .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    input[type="text"], input[type="color"], input[type="number"] { padding:8px; border:1px solid #e5e7eb; border-radius:8px; font-size:14px; }
+    input[type="text"].w100 { width:100%; }
+    button { font-size:14px; padding:8px 10px; border:1px solid #e5e7eb; background:#fff; border-radius:8px; cursor:pointer; }
+    button.primary { background:#111827; color:#fff; border-color:#111827; }
+    button.ghost { background:#f8fafc; }
+    button.danger { background:#fee2e2; border-color:#fecaca; color:#991b1b; }
+    .badge { font-size:12px; padding:2px 6px; border-radius:999px; background:#f1f5f9; border:1px solid #e5e7eb; }
+
+    .order-action-buttons { gap:6px; }
+    .icon-btn { padding:6px; width:34px; height:34px; display:flex; align-items:center; justify-content:center; }
+    .icon-btn svg { width:18px; height:18px; }
+    .icon-btn:disabled { opacity:.5; cursor:default; }
+    #btnOrderAdd.active { background:#111827; color:#fff; border-color:#111827; }
+    .order-create { margin-top:10px; padding-top:10px; border-top:1px dashed #e2e8f0; display:none; }
+    .order-create.open { display:block; }
+    .order-upload { margin-top:10px; background:#ffffff; border:1px dashed #e2e8f0; border-radius:12px; padding:12px; }
+
+    .list { display:flex; flex-direction:column; gap:6px; }
+    .item { padding:8px 10px; border:1px dashed #ddd; border-radius:10px; display:grid; grid-template-columns:auto 1fr auto; gap:8px; align-items:center; }
+    .item.active { background:#fff6e5; outline: 1px solid #fbbf24; }
+    .item .act { display:flex; gap:6px; }
+    .label { font-size:12px; color:#64748b; }
+    .hint { font-size:12px; color:#475569; }
+    mark { background:#fef08a; padding:0 2px; border-radius:3px; }
+
+    .color-dot { display:inline-flex; width:14px; height:14px; border-radius:50%; border:1px solid rgba(0,0,0,.15); box-shadow:0 0 0 1px rgba(255,255,255,.8); }
+
+    /* Чипы городов */
+    .chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+    .chip { font-size:12px; padding:4px 8px; border-radius:999px; border:1px solid #e5e7eb; background:#fff; cursor:pointer; user-select:none; }
+    .chip.active { background:#111827; color:#fff; border-color:#111827; }
+
+    /* Подписи домов */
+    .house-label { background:transparent; border:none; transform:translate(-50%,-50%); pointer-events:none; }
+    .house-label .hl { display:inline-block; padding:0 3px; font-size:9px; font-weight:700; background:rgba(255,255,255,.96); border:2px solid rgba(0,0,0,.25); border-radius:6px; box-shadow:0 1px 3px rgba(0,0,0,.10); line-height:1.1; white-space:nowrap; user-select:none; }
+
+    .ok { color:#067647; } .dangerText { color:#b42318; }
+
+    /* Таблица совпадений */
+    table { width:100%; border-collapse:collapse; font-size:13px; }
+    th, td { border-bottom:1px solid #eee; padding:6px 8px; text-align:left; }
+    tr.miss td { background:#fff1f2; }
+    tr.hit td { background:#f0fdf4; }
+
+    /* Переключатели видимости */
+    .vis { display:flex; align-items:center; gap:6px; }
+    .vis input { width:16px; height:16px; }
+
+    /* Принт */
+    @media print { #sidebar { display:none; } #app { grid-template-columns: 1fr; } .sidebar-toggle { display:none; } }
+
+    /* Поиск */
+    .tabs { display:flex; gap:6px; }
+    .tab { padding:6px 10px; border:1px solid #e5e7eb; border-radius:999px; cursor:pointer; }
+    .tab.active { background:#111827; color:#fff; border-color:#111827; }
+    .search-wrap { display:grid; grid-template-columns: 1fr auto; gap:8px; align-items:center; margin-top:8px; }
+    .search-input { padding:10px 12px; border-radius:10px; border:1px solid #e5e7eb; font-size:14px; width:100%; }
+    .search-hint { font-size:12px; color:#64748b; }
+    .suggest { margin-top:8px; display:flex; flex-direction:column; gap:6px; }
+    .sg-item { border:1px dashed #e5e7eb; border-radius:10px; padding:8px; background:#fff; }
+    .sg-top { display:flex; justify-content:space-between; gap:8px; align-items:center; }
+    .sg-title { font-weight:600; }
+
+    /* Инлайн-редактор */
+    .inline-editor { grid-column: 1 / -1; background:#fff; border:1px solid #eee; border-radius:10px; padding:10px; display:none; margin-top:8px; }
+    .inline-editor.open { display:block; }
+    .inline-row { display:grid; grid-template-columns: 1fr; gap:8px; }
+    .inline-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:6px; }
+    .inline-footer { display:flex; align-items:center; gap:8px; margin-top:8px; }
+
+    #quickCityFilters .chip { margin-top:0; }
+    .base-header { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+    .base-header-left { display:flex; align-items:center; gap:6px; }
+    #basePanelBody { margin-top:10px; }
+    #basePanelBody.hidden { display:none; }
+  </style>
+</head>
+<body>
+<button id="sidebarToggle" class="sidebar-toggle" title="Скрыть меню" aria-label="Скрыть меню">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/><path d="M19 5v14"/></svg>
+</button>
+<div id="app">
+  <div id="sidebar">
+
+    <!-- 🔎 Поиск -->
+    <div class="panel">
+      <div class="title" style="margin-bottom:8px;">Поиск</div>
+      <div class="tabs">
+        <span id="tabLocal" class="tab active">В базе</span>
+        <span id="tabGlobal" class="tab">На карте (OSM)</span>
+      </div>
+      <div class="search-wrap">
+        <input id="searchBox" class="search-input" type="text" placeholder="Город, улица, дом (⌘/Ctrl+K)" />
+        <button id="searchClear" class="ghost">Очистить</button>
+      </div>
+      <div class="row" style="justify-content:space-between; margin-top:6px;">
+        <div class="search-hint">Enter — к первому совпадению • Esc — очистить</div>
+        <span id="searchCount" class="badge"></span>
+      </div>
+      <div id="suggestBox" class="suggest" style="display:none;"></div>
+    </div>
+
+    <!-- 📦 Собранные наряды -->
+    <div class="panel">
+      <div class="row" style="justify-content:space-between; align-items:center;">
+        <div class="title">Собранные наряды</div>
+        <div class="row order-action-buttons">
+          <button id="btnOrderAdd" class="ghost">Добавить наряд</button>
+          <button id="btnOrdersShowAll" class="ghost icon-btn" title="Показать все на карте" aria-label="Показать все на карте">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3.2"/></svg>
+          </button>
+          <button id="btnOrdersHideAll" class="ghost icon-btn" title="Скрыть все с карты" aria-label="Скрыть все с карты">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 6.15A10.74 10.74 0 0 1 12 5c7 0 11 7 11 7a17.93 17.93 0 0 1-3.47 4.5"/><path d="M6.53 6.53A17.81 17.81 0 0 0 1 12s4 7 11 7a11.36 11.36 0 0 0 2-.17"/><path d="M9.5 9.5a3.2 3.2 0 0 0 4.5 4.5"/></svg>
+          </button>
+          <button id="btnOrdersScreenshot" class="ghost icon-btn" title="Скрин карты" aria-label="Скрин карты">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><rect x="7" y="7" width="10" height="10" rx="2"/></svg>
+          </button>
+        </div>
+      </div>
+      <input id="naryadLoad" type="file" accept=".json" style="display:none;" />
+      <div id="orderCreateSection" class="order-create">
+        <div class="row" style="gap:8px; flex-wrap:wrap;">
+          <button id="btnAddManual" class="ghost">Создать вручную</button>
+        </div>
+        <div class="order-upload">
+          <div class="label" style="font-size:13px; font-weight:600;">Загрузка таблицы клиента (XLSX/CSV) → Наряд</div>
+          <div class="hint" style="margin-top:6px;">Ожидаются столбцы: <b>Адрес</b> или связка <b>Нас. пункт</b> + <b>Улица</b> + <b>Дом</b>, а также <b>Кол</b>.</div>
+          <div class="row" style="margin-top:8px;">
+            <input id="fileInput" type="file" accept=".xlsx,.xls,.csv" />
+            <button id="btnClearUpload" class="ghost">Очистить</button>
+          </div>
+          <div id="uploadStats" class="muted" style="margin-top:6px;"></div>
+          <div id="matchTableWrap" style="margin-top:8px; display:none;">
+            <div class="row" style="justify-content:space-between; align-items:center;">
+              <div class="label">Совпадения адресов с базой</div>
+              <div class="row">
+                <input id="companyInput" type="text" placeholder="Название компании" />
+                <input id="colorInput" type="color" value="#e11d48" title="Цвет" />
+                <button id="btnCreateOrder" class="primary">Создать наряд</button>
+              </div>
+            </div>
+            <div class="hint" style="margin-top:6px;">Красные строки — адрес не найден. Зелёные — будет добавлен в наряд.</div>
+            <div style="max-height:220px; overflow:auto; margin-top:8px;">
+              <table id="matchTable"></table>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div id="ordersList" class="list" style="margin-top:8px;"></div>
+    </div>
+
+    <!-- 🔧 Редактор наряда -->
+    <div class="panel" id="orderEditPanel" style="display:none;"></div>
+
+
+    <!-- 🏠 Единая база -->
+    <div class="panel" id="basePanel">
+      <div class="base-header">
+        <div class="title">Единая база</div>
+        <div class="base-header-left">
+          <button id="btnBasePanelToggle" class="ghost icon-btn" title="Свернуть список" aria-label="Свернуть список">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <button id="btnBaseShow" class="ghost icon-btn" title="Показать адреса на карте" aria-label="Показать адреса на карте">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3.2"/></svg>
+          </button>
+          <button id="btnBaseHide" class="ghost icon-btn" title="Скрыть адреса на карте" aria-label="Скрыть адреса на карте">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 6.15A10.74 10.74 0 0 1 12 5c7 0 11 7 11 7a17.93 17.93 0 0 1-3.47 4.5"/><path d="M6.53 6.53A17.81 17.81 0 0 0 1 12s4 7 11 7a11.36 11.36 0 0 0 2-.17"/><path d="M9.5 9.5a3.2 3.2 0 0 0 4.5 4.5"/></svg>
+          </button>
+        </div>
+        <div class="row">
+          <button id="btnAddBase" class="ghost">Добавить адрес</button>
+          <span id="countLbl" class="badge"></span>
+        </div>
+      </div>
+      <div id="basePanelBody">
+        <div class="muted" id="loadMsg" style="margin-top:6px;"></div>
+        <div class="label" style="margin-top:10px;">Фильтр по городам</div>
+        <div id="cityChips" class="chips"></div>
+        <div class="list" id="itemsList" style="margin-top:10px;"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="map"></div>
+</div>
+
+<script>
+(function(){
+  const DEFAULT_BASE_COLOR = '#7c3aed';
+  const DEFAULT_ORDER_COLOR = '#0EA5E9';
+  const LABEL_ZOOM_MIN = 15;
+  const $ = id => document.getElementById(id);
+
+  function normalizeHexColor(value, fallback = DEFAULT_ORDER_COLOR){
+    const toHex = (input)=>{
+      if(typeof input !== 'string') return null;
+      let hex = input.trim();
+      if(!hex) return null;
+      if(!hex.startsWith('#')) hex = '#'+hex;
+      if(/^#([0-9a-f]{3})$/i.test(hex)){
+        hex = '#'+hex.slice(1).split('').map(ch=> ch+ch).join('');
+      }
+      if(/^#([0-9a-f]{6})$/i.test(hex)){
+        return '#'+hex.slice(1).toUpperCase();
+      }
+      return null;
+    };
+    const fallbackHex = toHex(fallback) || '#E11D48';
+    return toHex(value) || fallbackHex;
+  }
+
+  function hexToRgba(hex, alpha = 1){
+    const value = normalizeHexColor(hex, DEFAULT_ORDER_COLOR).slice(1);
+    const r = parseInt(value.slice(0, 2), 16);
+    const g = parseInt(value.slice(2, 4), 16);
+    const b = parseInt(value.slice(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+
+  // --- Карта
+  let baseTileLayer = null;
+
+  const map = L.map('map').setView([51.533, 46.033], 12);
+  baseTileLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+    maxZoom:20,
+    attribution:'&copy; OpenStreetMap contributors',
+    crossOrigin:'anonymous'
+  }).addTo(map);
+
+  const basePanel = $('basePanel');
+  const basePanelBody = $('basePanelBody');
+  const btnBasePanelToggle = $('btnBasePanelToggle');
+  const btnBaseShow = $('btnBaseShow');
+  const btnBaseHide = $('btnBaseHide');
+  const quickCityFilters = $('quickCityFilters');
+  const btnOrdersShowAll = $('btnOrdersShowAll');
+  const btnOrdersHideAll = $('btnOrdersHideAll');
+  const btnOrdersScreenshot = $('btnOrdersScreenshot');
+  const btnOrderAdd = $('btnOrderAdd');
+  const orderCreateSection = $('orderCreateSection');
+  const naryadLoad = $('naryadLoad');
+  const sidebarToggle = $('sidebarToggle');
+  const addOrderDefaultLabel = btnOrderAdd ? btnOrderAdd.textContent.trim() : 'Добавить наряд';
+
+  function setOrderCreateOpen(open){
+    if(orderCreateSection){
+      if(open){
+        orderCreateSection.classList.add('open');
+      } else {
+        orderCreateSection.classList.remove('open');
+      }
+    }
+    if(btnOrderAdd){
+      if(open){
+        btnOrderAdd.classList.add('active');
+      } else {
+        btnOrderAdd.classList.remove('active');
+      }
+      btnOrderAdd.textContent = open ? 'Свернуть' : addOrderDefaultLabel;
+    }
+  }
+
+  function ensureOrderCreateOpen(){
+    if(orderCreateSection && !orderCreateSection.classList.contains('open')){
+      setOrderCreateOpen(true);
+    }
+  }
+
+  // --- Состояние
+  const state = {
+    db: {version:1, updated_at:new Date().toISOString(), items:[]},
+    dbSources: [],
+    dbSourceById: new Map(),
+    dbSourceIndex: new Map(),
+    features: new Map(),
+    labels: [],
+    selectedBaseId: null,
+    baseCollapsed: false,
+    sidebarCollapsed: false,
+    cityFilter: new Set(),
+    searchMode: 'local',
+    searchQuery: '',
+    searchMarker: null,
+    baseVisibleIds: new Set(),
+    baseMapHidden: false,
+
+    orders: [],
+    orderLayers: new Map(),
+    addrToOrder: new Map(),
+    activeOrderId: null,
+    editingBaseId: null,
+    baseEditorCleanup: null,
+
+    selection: new Set(),
+    dragRect: null,
+    dragStart: null,
+
+    ghDb: null,
+    ghDbSpecs: [],
+    ghNrd: null,
+    naryadFsHandle: null
+  };
+
+  function setSidebarCollapsed(collapsed){
+    state.sidebarCollapsed = !!collapsed;
+    document.body.classList.toggle('sidebar-collapsed', state.sidebarCollapsed);
+    updateSidebarToggle();
+    map.invalidateSize();
+    setTimeout(()=> map.invalidateSize(), 320);
+  }
+
+  // --- Helpers
+  const esc = s => String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const norm = s => String(s||'').toLowerCase().replaceAll('ё','е').trim();
+  const ICONS = {
+    sidebarCollapse: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/><path d="M19 5v14"/></svg>',
+    sidebarExpand: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/><path d="M5 5v14"/></svg>',
+    baseCollapse: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>',
+    baseExpand: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 15 12 9 18 15"/></svg>'
+  };
+  const ringLonLat_to_LatLng = ring => ring.map(([x,y])=>[y,x]);
+  const ringLatLng_to_LonLat = ring => ring.map(p=>[p.lng, p.lat]);
+  const rand = n => Math.floor(Math.random()*n);
+  function extractHouse(t){
+    const s=String(t||'').trim();
+    const m=s.match(/,\s*([^,]+)\s*$/); if(m) return m[1].replace(/^(дом|д\.)\s*/i,'').trim();
+    const m2=s.match(/(\d+[0-9A-Za-zА-Яа-яЁё\/\-]*?)\s*$/); return m2?m2[1]:s;
+  }
+  function escapeRegExp(str){
+    return String(str||'').replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+  }
+  function stripCityPrefix(value, city){
+    let result = String(value||'').trim();
+    const c = String(city||'').trim();
+    if(!result || !c) return result;
+    const basePattern = () => new RegExp(`^\\s*(?:г\\.?\\s*)?${escapeRegExp(c)}\\s*,?\\s*`, 'i');
+    const trailingPattern = () => new RegExp(`^\\s*${escapeRegExp(c)}\\s*(?:г\\.?|город)\\s*,?\\s*`, 'i');
+    const cityWordPattern = () => new RegExp(`^\\s*город\\s*${escapeRegExp(c)}\\s*,?\\s*`, 'i');
+    let prev;
+    do {
+      prev = result;
+      result = result.replace(basePattern(), '').replace(trailingPattern(), '').replace(cityWordPattern(), '').trim();
+    } while(result !== prev);
+    return result;
+  }
+  function splitAddressParts(base){
+    const rawParts = String(base?.title||'').split(',').map(p=>p.trim()).filter(Boolean);
+    let city = base?.city ? String(base.city).trim() : '';
+    if(!city && rawParts.length){
+      const first = rawParts[0];
+      if(/^г\.?/i.test(first)) city = first.replace(/^г\.?/i,'').trim();
+      else if(/^город/i.test(first)) city = first.replace(/^город/i,'').trim();
+    }
+    let rest = String(base?.title||'').trim();
+    if(city){
+      const cityPattern = new RegExp(`^\s*(?:г\.?\s*)?${escapeRegExp(city)}\s*,?\s*`, 'i');
+      rest = rest.replace(cityPattern, '');
+    }
+    const parts = rest.split(',').map(p=>p.trim()).filter(Boolean);
+    let house = '';
+    if(parts.length){
+      const last = parts[parts.length-1];
+      if(/[0-9]/.test(last)){ house = last.replace(/^(дом|д\.)\s*/i,'').trim(); parts.pop(); }
+    }
+    let street = parts.join(', ').trim();
+    if(!street && rest && !house){ street = rest; }
+    street = street.replace(/^(ул\.?|улица|пр\.?|проспект|пер\.?|переулок|бульвар|бул\.?|шоссе|тракт|аллея|площадь|пл\.?|дорога|набережная|наб\.?|мкр\.?|микрорайон)\s*/i,'').trim();
+    street = stripCityPrefix(street, city);
+    return { city, street, house: house || extractHouse(base?.title||'') };
+  }
+  function extractOrderAddress(base){
+    const parts = splitAddressParts(base);
+    const city = (base?.city ? String(base.city).trim() : '') || parts.city || '';
+    const title = String(base?.title||'');
+    let street = (parts.street || '').trim();
+    let house = (parts.house || extractHouse(title) || '').trim();
+    if(!street){
+      let rest = title;
+      if(city){
+        const cityPattern = new RegExp(`^\s*(?:г\.?\s*)?${escapeRegExp(city)}\s*,?\s*`, 'i');
+        rest = rest.replace(cityPattern, '');
+      }
+      if(house){
+        const housePattern = new RegExp(`,?\s*(?:дом|д\.)?\s*${escapeRegExp(house)}\s*$`, 'i');
+        rest = rest.replace(housePattern, '');
+      }
+      const candidates = rest.split(',').map(p=>p.trim()).filter(Boolean);
+      street = (candidates[0] || '').trim();
+    }
+    street = stripCityPrefix(street, city);
+    return { city: city.trim(), street, house };
+  }
+  function uid(){ return (crypto?.randomUUID?.() || (Date.now().toString(36)+Math.random().toString(36).slice(2,8))); }
+  function makeOrderCode(){
+    const d=new Date(); const y=d.getFullYear(); const m=String(d.getMonth()+1).padStart(2,'0'); const day=String(d.getDate()).padStart(2,'0');
+    return `NRD-${y}${m}${day}-${String(rand(9999)).padStart(4,'0')}`;
+  }
+
+  // --- GitHub helpers
+  function parseGhFromHashKey(key, fallbackPath, aliases=[]){
+    const h = new URLSearchParams(location.hash.slice(1));
+    const token = h.get('token') || undefined;
+    let gh = null;
+    for(const k of [key, ...aliases]){
+      const v = h.get(k);
+      if(v){ gh = v; break; }
+    }
+    if(!gh) return null;
+    const [repoPart, bp] = gh.split('@');
+    const [branch, ...pathParts] = (bp||`main:${fallbackPath}`).split(':');
+    const path = pathParts.join(':') || fallbackPath;
+    return { repo: repoPart, branch, path, token };
+  }
+  function resolveGhRelativePath(basePath, extra){
+    const cleanExtra = String(extra||'').trim();
+    if(!cleanExtra) return basePath;
+    if(cleanExtra.startsWith('/')) return cleanExtra.replace(/^\/+/, '');
+    const parts = Array.isArray(basePath?.split) ? basePath.split('/') : [];
+    if(parts.length) parts.pop();
+    const extraParts = cleanExtra.split('/');
+    for(const part of extraParts){
+      if(!part || part === '.') continue;
+      if(part === '..'){ if(parts.length) parts.pop(); continue; }
+      parts.push(part);
+    }
+    return parts.join('/');
+  }
+  function parseGhSpecString(raw, fallbackSpec){
+    if(!fallbackSpec) return null;
+    const value = String(raw||'').trim();
+    if(!value) return null;
+    const repoPattern = /^[^@\s]+\/[\w.-]+@/;
+    if(repoPattern.test(value)){
+      const [repoPart, rest=''] = value.split('@');
+      const [branchPart, ...pathParts] = rest.split(':');
+      const branch = branchPart || fallbackSpec.branch;
+      const path = pathParts.length ? pathParts.join(':') : fallbackSpec.path;
+      return { repo: repoPart, branch, path, token: fallbackSpec.token };
+    }
+    if(value.includes('@')){
+      const [branchPart, ...pathParts] = value.split(':');
+      const branch = branchPart || fallbackSpec.branch;
+      const path = pathParts.length ? pathParts.join(':') : fallbackSpec.path;
+      return { repo: fallbackSpec.repo, branch, path, token: fallbackSpec.token };
+    }
+    return { ...fallbackSpec, path: resolveGhRelativePath(fallbackSpec.path, value) };
+  }
+  function buildGhDbSpecList(primary){
+    if(!primary) return [];
+    const params = new URLSearchParams(location.hash.slice(1));
+    const extras = new Set();
+    params.getAll('ghdblist').forEach(v=>{
+      String(v||'').split(/[,;]/).forEach(part=>{ const clean = part.trim(); if(clean) extras.add(clean); });
+    });
+    ['ghdb2','ghdbextra','ghdb_eng','ghdbadd'].forEach(key=>{
+      const val = params.get(key);
+      if(val) extras.add(val);
+    });
+    const autoMap = {
+      'database.json': ['eng_database.json'],
+      'databese.json': ['eng_database.json'],
+      'eng_database.json': ['database.json']
+    };
+    const baseName = (primary.path.split('/').pop() || '').toLowerCase();
+    (autoMap[baseName]||[]).forEach(name=> extras.add(name));
+
+    const specs = [];
+    const seen = new Set();
+    function push(spec){
+      if(!spec) return;
+      const key = `${spec.repo}|${spec.branch}|${spec.path}`;
+      if(seen.has(key)) return;
+      seen.add(key);
+      specs.push(spec);
+    }
+    push(primary);
+    extras.forEach(extra=> push(parseGhSpecString(extra, primary)));
+    return specs;
+  }
+  function formatGhSpecs(specs){
+    if(!Array.isArray(specs) || !specs.length) return '';
+    const repoSet = new Set(specs.map(s=> `${s.repo}@${s.branch}`));
+    if(repoSet.size === 1){
+      const first = specs[0];
+      const paths = specs.map(s=> s.path).join(' + ');
+      return `${first.repo}@${first.branch} → ${paths}`;
+    }
+    return specs.map(s=> `${s.repo}@${s.branch}:${s.path}`).join(' + ');
+  }
+  function updateLoadMessage(){
+    const el = $('loadMsg');
+    if(!el) return;
+    el.className = 'muted';
+    if(state.ghDbSpecs.length){
+      const base = formatGhSpecs(state.ghDbSpecs);
+      const nrd = state.ghNrd ? state.ghNrd.path : 'локально';
+      const extrasParts = [];
+      if(state.dbSources.length>1){
+        extrasParts.push(`Файлы базы: ${state.dbSources.map(s=> s.label || (s.spec? s.spec.path : '')).filter(Boolean).join(', ')}`);
+      }
+      const extras = extrasParts.length ? ' • '+extrasParts.join(' • ') : '';
+      el.textContent = `GitHub: ${base} | Наряды: ${nrd}${extras}`;
+    }else{
+      const extras = state.dbSources.length>1
+        ? ` • Файлы базы: ${state.dbSources.map(s=> s.label).filter(Boolean).join(', ')}`
+        : '';
+      el.textContent = `Pages: читаем ./database.json (+ ./eng_database.json, если есть) и ./naryad.json (если есть).${extras}`;
+    }
+  }
+  function encodePathForContentsAPI(path){ return path.split('/').map(encodeURIComponent).join('/'); }
+  function toBase64Unicode(str){
+    const bytes = new TextEncoder().encode(str);
+    let bin = ''; const CHUNK = 0x8000;
+    for (let i = 0; i < bytes.length; i += CHUNK) { bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK)); }
+    return btoa(bin);
+  }
+  function fromBase64Unicode(b64){
+    const clean = String(b64||'').replace(/\n/g, '');
+    const bin = atob(clean);
+    const bytes = new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++){ bytes[i] = bin.charCodeAt(i); }
+    return new TextDecoder().decode(bytes);
+  }
+  async function ghGetSha({repo,branch,path,token}){
+    const url = `https://api.github.com/repos/${repo}/contents/${encodePathForContentsAPI(path)}?ref=${encodeURIComponent(branch)}`;
+    const headers = { 'Accept':'application/vnd.github+json', 'X-GitHub-Api-Version':'2022-11-28' };
+    if(token){ headers['Authorization'] = `token ${token}`; }
+    const r = await fetch(url, { method:'GET', headers });
+    if(r.status===404) return null;
+    if(!r.ok){ const t=await r.text().catch(()=> ''); throw new Error(`GitHub GET ${r.status}: ${t}`); }
+    const j = await r.json(); return j.sha || null;
+  }
+  async function ghPut({repo,branch,path,token}, content, sha){
+    const url = `https://api.github.com/repos/${repo}/contents/${encodePathForContentsAPI(path)}`;
+    const body = { message:`update ${path} via leaflet`, branch, content: toBase64Unicode(content), ...(sha?{sha}:{}) };
+    const headers = { 'Accept':'application/vnd.github+json', 'Content-Type':'application/json', 'X-GitHub-Api-Version':'2022-11-28' };
+    if(token){ headers['Authorization'] = `token ${token}`; }
+    const r = await fetch(url, { method:'PUT', headers, body: JSON.stringify(body) });
+    if(!r.ok){ const txt=await r.text().catch(()=> ''); const err=new Error(`GitHub PUT ${r.status}: ${txt||'Failed to save'}`); err._status=r.status; throw err; }
+    return await r.json();
+  }
+  async function ghDownloadBlobJson({repo, token}, sha){
+    const url = `https://api.github.com/repos/${repo}/git/blobs/${encodeURIComponent(sha)}`;
+    const headers = {
+      'Accept':'application/vnd.github.raw',
+      'X-GitHub-Api-Version':'2022-11-28'
+    };
+    if(token){ headers['Authorization'] = `token ${token}`; }
+    const r = await fetch(url, { method:'GET', headers });
+    if(!r.ok){ const txt = await r.text().catch(()=> ''); throw new Error(`GitHub blob ${r.status}: ${txt}`); }
+    const text = await r.text();
+    try{ return JSON.parse(text); }
+    catch(e){ throw new Error(`JSON parse error for blob ${sha}: ${e.message}`); }
+  }
+  async function ghDownloadJson({repo,branch,path,token}){
+    const url = `https://api.github.com/repos/${repo}/contents/${encodePathForContentsAPI(path)}?ref=${encodeURIComponent(branch)}`;
+    const headers = { 'Accept':'application/vnd.github+json', 'X-GitHub-Api-Version':'2022-11-28' };
+    if(token){ headers['Authorization'] = `token ${token}`; }
+    const r = await fetch(url, { method:'GET', headers, cache:'no-store' });
+    if(r.status===404){ throw new Error('HTTP 404'); }
+    if(!r.ok){ const txt = await r.text().catch(()=> ''); throw new Error(`GitHub GET ${r.status}: ${txt}`); }
+    const j = await r.json();
+    if(typeof j.content === 'string' && j.encoding === 'base64' && !j.truncated){
+      const text = fromBase64Unicode(j.content);
+      try{ return JSON.parse(text); }
+      catch(e){ throw new Error(`JSON parse error for ${path}: ${e.message}`); }
+    }
+    const attempts = [];
+    function track(label, err){ err._source = label; attempts.push(err); }
+
+    let blobTried = false;
+    if(token && j.sha){
+      blobTried = true;
+      try{
+        return await ghDownloadBlobJson({repo, token}, j.sha);
+      }catch(err){ track('blob-auth', err); }
+    }
+
+    if(j.download_url){
+      try{
+        return await loadJsonNoCache(j.download_url, token, { forceAuth:true });
+      }catch(err){ track('download', err); }
+    }
+
+    if(j.sha && !blobTried){
+      try{
+        return await ghDownloadBlobJson({repo, token}, j.sha);
+      }catch(err){ track('blob', err); }
+    }
+
+    const lastErr = attempts[attempts.length-1];
+    if(lastErr){ throw lastErr; }
+    throw new Error(`Unexpected GitHub response for ${path}`);
+  }
+  async function ghLoadWithRawFallback(spec, {missingValue}={}){
+    const rawUrl = `https://raw.githubusercontent.com/${spec.repo}/${spec.branch}/${spec.path}`;
+    const errors = [];
+    const FAIL = Symbol('fail');
+
+    async function attempt(label, fn){
+      try{
+        const value = await fn();
+        return value === undefined ? FAIL : value;
+      }catch(err){
+        err._ghStep = label;
+        errors.push(err);
+        return FAIL;
+      }
+    }
+
+    const viaApi = await attempt('api', ()=> ghDownloadJson(spec));
+    if(viaApi !== FAIL) return viaApi;
+
+    if(spec.token){
+      const withAuth = await attempt('raw-auth', ()=> loadJsonNoCache(rawUrl, spec.token, { forceAuth:true }));
+      if(withAuth !== FAIL) return withAuth;
+    }
+
+    const withoutAuth = await attempt('raw-public', ()=> loadJsonNoCache(rawUrl));
+    if(withoutAuth !== FAIL) return withoutAuth;
+
+    const lastErr = errors[errors.length-1] || new Error(`Failed to load ${spec.path}`);
+    if(missingValue && /404/.test(lastErr?.message||'')) return missingValue;
+    if(lastErr && lastErr._ghStep){ lastErr.message += ` (${lastErr._ghStep})`; }
+    throw lastErr;
+  }
+
+  // --- База: слои и видимость
+  function ensureBaseLayer(it){
+    let poly = state.features.get(it.id);
+    if(!poly && Array.isArray(it.polygon) && it.polygon.length>=3){
+      const ll = ringLonLat_to_LatLng(it.polygon);
+      poly = L.polygon(ll, { color:DEFAULT_BASE_COLOR, weight:2, fillColor:DEFAULT_BASE_COLOR, fillOpacity:.85 });
+      poly._id = it.id;
+      poly.on('click',()=> onBasePolygonClick(it.id));
+      state.features.set(it.id, poly);
+    }
+    return poly || null;
+  }
+  function placeEdgeLabel(layer, text){
+    if(map.getZoom() < LABEL_ZOOM_MIN) return;
+    const b=layer.getBounds();
+    const pos = map.layerPointToLatLng(map.latLngToLayerPoint(L.latLng(b.getNorth(), (b.getEast()+b.getWest())/2)).add([0,-12]));
+    const icon = L.divIcon({ className:'house-label', html:`<span class="hl">${esc(text||'')}</span>` });
+    const mk = L.marker(pos, { icon, interactive:false }).addTo(map);
+    state.labels.push(mk);
+  }
+  function addBaseLabelsIfZoom(){
+    state.labels.forEach(m=>map.removeLayer(m)); state.labels=[];
+    if(map.getZoom() < LABEL_ZOOM_MIN) return;
+    state.features.forEach(l=>{
+      if(map.hasLayer(l)){
+        const it = state.db.items.find(x=>x.id===l._id);
+        if(it) placeEdgeLabel(l, extractHouse(it.title));
+      }
+    });
+  }
+  function applyBaseVisibility(){
+    state.labels.forEach(m=>map.removeLayer(m)); state.labels=[];
+    state.db.items.forEach(it=>{
+      const layer = state.features.get(it.id);
+      const passCity = (state.cityFilter.size===0) || state.cityFilter.has((it.city||'').trim().toLowerCase());
+      const passSearch = !state.searchQuery || norm(`${it.city} ${it.title}`).includes(norm(state.searchQuery));
+      const passVisible = state.baseVisibleIds.has(it.id);
+      const passNotInOrders = !state.addrToOrder.has(it.id);
+      const passMap = !state.baseMapHidden;
+      const pass = passCity && passSearch && passVisible && passNotInOrders && passMap && Array.isArray(it.polygon) && it.polygon.length>=3;
+      if(pass){
+        const poly = ensureBaseLayer(it);
+        if(poly && !map.hasLayer(poly)) poly.addTo(map);
+        if(poly) placeEdgeLabel(poly, extractHouse(it.title));
+      } else {
+        if(layer && map.hasLayer(layer)) map.removeLayer(layer);
+      }
+    });
+  }
+  function fitAllVisible(){
+    const b=L.latLngBounds();
+    state.features.forEach(l=>{ if(map.hasLayer(l)) b.extend(l.getBounds()); });
+    state.orderLayers.forEach(g=>{ if(map.hasLayer(g)) b.extend(g.getBounds()); });
+    if(b.isValid()) map.fitBounds(b.pad(0.15));
+  }
+
+  // --- Загрузка базы
+  function normalizeDb(j){
+    return {
+      version: j.version||1,
+      updated_at: j.updated_at || new Date().toISOString(),
+      items: Array.isArray(j.items) ? j.items.map(x=>({
+        id: String(x.id || uid()), title: x.title||'', city: x.city||'', polygon: Array.isArray(x.polygon)?x.polygon:null
+      })) : []
+    };
+  }
+  function combineDbSegments(segments){
+    if(!Array.isArray(segments) || !segments.length){
+      return normalizeDb({ version:1, updated_at:new Date().toISOString(), items:[] });
+    }
+    state.dbSourceById.clear();
+    state.dbSources = segments.map((segment, idx)=>({
+      key: segment.key || `${segment.type||'source'}:${idx}`,
+      label: segment.label || '',
+      type: segment.type || 'source',
+      spec: segment.spec || null,
+      count: 0
+    }));
+    const combined = { version:1, updated_at:new Date().toISOString(), items:[] };
+    let latestTs = 0;
+    let maxVersion = 1;
+    const usedIds = new Set();
+    const idCounters = new Map();
+
+    segments.forEach((segment, idx)=>{
+      const normalized = normalizeDb(segment.data || {});
+      maxVersion = Math.max(maxVersion, normalized.version||1);
+      const ts = Date.parse(normalized.updated_at || '');
+      if(!Number.isNaN(ts) && ts > latestTs){
+        latestTs = ts;
+        combined.updated_at = normalized.updated_at;
+      }
+      normalized.items.forEach(item=>{
+        if(!item || typeof item !== 'object') return;
+        let id = String(item.id || uid());
+        if(usedIds.has(id)){
+          let counter = idCounters.get(id) || 2;
+          let candidate = `${id}-${counter}`;
+          while(usedIds.has(candidate)){
+            counter += 1;
+            candidate = `${id}-${counter}`;
+          }
+          idCounters.set(id, counter + 1);
+          id = candidate;
+          item = { ...item, id };
+        }
+        usedIds.add(id);
+        combined.items.push(item);
+        const source = state.dbSources[idx];
+        if(source){
+          source.count += 1;
+          state.dbSourceById.set(id, source.key);
+        }
+      });
+    });
+
+    combined.version = maxVersion;
+    if(!latestTs){
+      combined.updated_at = new Date().toISOString();
+    }
+    state.dbSourceIndex = new Map();
+    state.dbSources.forEach(src=> state.dbSourceIndex.set(src.key, src));
+    return combined;
+  }
+
+  function getDbSourceDisplayName(source){
+    if(!source) return '';
+    if(source.label) return String(source.label);
+    if(source.spec && source.spec.path) return String(source.spec.path);
+    if(source.key) return String(source.key);
+    return '';
+  }
+  function getDbSourceLookupName(source){
+    return getDbSourceDisplayName(source).toLowerCase();
+  }
+  function getDbSourceFileName(source){
+    const display = getDbSourceDisplayName(source) || 'database.json';
+    const parts = display.split('/');
+    const last = parts[parts.length-1] || parts[parts.length-2];
+    return (last || 'database.json').trim() || 'database.json';
+  }
+  function guessDbSourceKeyForItem(item){
+    if(!item || !state.dbSources.length) return state.dbSources[0]?.key || null;
+    const city = String(item.city || '').trim().toLowerCase();
+    const findBy = (predicate)=> state.dbSources.find(src=> predicate(getDbSourceLookupName(src)));
+    if(city){
+      const direct = findBy(name=> name.includes(city));
+      if(direct) return direct.key;
+    }
+    if(city.includes('энгельс')){
+      const eng = findBy(name=> name.includes('eng') || name.includes('энг'));
+      if(eng) return eng.key;
+    }
+    if(city.includes('саратов')){
+      const sar = findBy(name=> name.includes('sar') || name.includes('сарат'));
+      if(sar) return sar.key;
+    }
+    if(city){
+      const compact = city.replace(/\s+/g,'');
+      const alt = findBy(name=> name.includes(compact));
+      if(alt) return alt.key;
+    }
+    return state.dbSources[0]?.key || null;
+  }
+  function ensureItemSourceKey(item){
+    if(!item) return state.dbSources[0]?.key || null;
+    let key = state.dbSourceById.get(item.id);
+    if(!key || !state.dbSourceIndex.has(key)){
+      key = guessDbSourceKeyForItem(item);
+      if(key){
+        state.dbSourceById.set(item.id, key);
+      }
+    }
+    return key;
+  }
+  function refreshDbSourceStats(){
+    state.dbSourceIndex = new Map();
+    state.dbSources.forEach(src=>{
+      state.dbSourceIndex.set(src.key, src);
+      src.count = 0;
+    });
+    const validIds = new Set(state.db.items.map(it=> it.id));
+    Array.from(state.dbSourceById.keys()).forEach(id=>{
+      if(!validIds.has(id)) state.dbSourceById.delete(id);
+    });
+    state.db.items.forEach(item=>{
+      const key = ensureItemSourceKey(item);
+      const source = key ? state.dbSourceIndex.get(key) : null;
+      if(source) source.count += 1;
+    });
+  }
+  async function loadGitHubDatabases(specs){
+    const segments = [];
+    for(let i=0;i<specs.length;i++){
+      const spec = specs[i];
+      try{
+        const data = await ghLoadWithRawFallback(spec);
+        segments.push({ type:'github', label: spec.path, spec, data });
+      }catch(err){
+        const msg = err?.message || '';
+        const is404 = /404/.test(msg);
+        if(i === 0 || !is404){
+          throw new Error(`${spec.path}: ${msg}`.trim());
+        }
+        console.warn('[gh-db] skip', spec.path, err);
+      }
+    }
+    if(!segments.length){
+      throw new Error('Не удалось загрузить базы GitHub.');
+    }
+    return combineDbSegments(segments);
+  }
+  async function loadLocalDatabases(){
+    const files = ['database.json', 'eng_database.json'];
+    const segments = [];
+    for(let i=0;i<files.length;i++){
+      const file = files[i];
+      const url = new URL(file, location.href).toString();
+      try{
+        const data = await loadJsonNoCache(url);
+        segments.push({ type:'local', label: file, data });
+      }catch(err){
+        const msg = err?.message || '';
+        if(i === 0){
+          throw new Error(`${file}: ${msg}`.trim());
+        }
+        if(!/404/.test(msg)){ console.warn('[local-db] skip', file, err); }
+      }
+    }
+    if(!segments.length){
+      throw new Error('database.json: HTTP 404');
+    }
+    return combineDbSegments(segments);
+  }
+  async function loadDbFromUrl(url){
+    const bust = url + (url.includes('?') ? '&' : '?') + 'v=' + Date.now();
+    const r = await fetch(bust, { cache:'no-store', headers:{'Accept':'application/json'} });
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    state.db = normalizeDb(await r.json());
+    refreshDbSourceStats();
+    state.baseVisibleIds = new Set(state.db.items.map(x=>x.id));
+    renderCityChips();
+    renderBaseList();
+    applyBaseVisibility();
+    updateBasePanelUI();
+    updateBaseMapButtons();
+  }
+
+  // --- Поиск/фильтры
+  const searchBox = $('searchBox');
+  const tabLocal = $('tabLocal');
+  const tabGlobal = $('tabGlobal');
+  const suggestBox = $('suggestBox');
+  const searchCount = $('searchCount');
+
+  tabLocal.onclick = ()=>{ tabLocal.classList.add('active'); tabGlobal.classList.remove('active'); state.searchMode='local'; suggestBox.style.display='none'; setSearch(searchBox.value); };
+  tabGlobal.onclick = ()=>{ tabGlobal.classList.add('active'); tabLocal.classList.remove('active'); state.searchMode='global'; setSearch(searchBox.value); };
+
+  $('searchClear').onclick = ()=>{ searchBox.value=''; setSearch(''); searchBox.focus(); };
+  searchBox.addEventListener('input', (e)=> setSearch(e.target.value));
+  searchBox.addEventListener('keydown', (e)=>{
+    if(e.key==='Enter'){
+      const first = document.querySelector('#itemsList .item');
+      if(first){ const id = first.dataset.id; focusBaseItem(id, {scroll:true}); }
+    } else if(e.key==='Escape'){ $('searchClear').click(); }
+  });
+  window.addEventListener('keydown', (e)=>{ if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='k'){ e.preventDefault(); searchBox.focus(); searchBox.select(); }});
+  function setSearch(v){ state.searchQuery=v; renderBaseList(); applyBaseVisibility(); if(state.searchMode==='global') debouncedNominatim(v); }
+
+  function cleanupBaseEditor({preserveEditingId=false}={}){
+    if(state.baseEditorCleanup){
+      try{ state.baseEditorCleanup(); }
+      catch(_){ }
+      state.baseEditorCleanup = null;
+    }
+    document.querySelectorAll('.inline-editor.open').forEach(el=>{
+      el.classList.remove('open');
+      el.innerHTML='';
+    });
+    if(!preserveEditingId){
+      state.editingBaseId = null;
+    }
+  }
+
+  function mountBaseEditor(it, container){
+    if(!container) return;
+    cleanupBaseEditor({preserveEditingId:true});
+    state.editingBaseId = it.id;
+
+    container.classList.add('open');
+    container.innerHTML = `
+      <div class="title" style="margin-bottom:6px;">Редактирование адреса</div>
+      <div class="inline-row">
+        <div>
+          <div class="label">Название</div>
+          <input type="text" data-role="title" value="${esc(it.title||'')}" />
+        </div>
+        <div>
+          <div class="label">Город</div>
+          <input type="text" data-role="city" value="${esc(it.city||'')}" />
+        </div>
+      </div>
+      <div class="inline-actions" style="margin-top:6px;">
+        <button class="ghost" data-role="relink">Привязать к OSM</button>
+        <button class="ghost" data-role="draw">Нарисовать вручную</button>
+        <button class="ghost" data-role="draw-finish" style="display:none;">Завершить рисование</button>
+        <button class="ghost" data-role="draw-undo" style="display:none;">Отменить точку</button>
+        <button class="ghost" data-role="clear-poly">Удалить полигон</button>
+      </div>
+      <div class="inline-footer">
+        <button class="primary" data-role="save">Сохранить</button>
+        <button class="ghost" data-role="cancel">Отмена</button>
+        <span class="muted" data-role="message"></span>
+      </div>
+      <div class="hint" data-role="hint" style="margin-top:6px;"></div>
+    `;
+
+    const eTitle = container.querySelector('[data-role="title"]');
+    const eCity = container.querySelector('[data-role="city"]');
+    const modeHint = container.querySelector('[data-role="hint"]');
+    const editMsg = container.querySelector('[data-role="message"]');
+    const btnRelink = container.querySelector('[data-role="relink"]');
+    const btnDraw = container.querySelector('[data-role="draw"]');
+    const btnDrawFinish = container.querySelector('[data-role="draw-finish"]');
+    const btnDrawUndo = container.querySelector('[data-role="draw-undo"]');
+    const btnClearPoly = container.querySelector('[data-role="clear-poly"]');
+    const btnSave = container.querySelector('[data-role="save"]');
+    const btnCancel = container.querySelector('[data-role="cancel"]');
+
+    let drawMode=false, drawPoints=[], drawLayer=null, previewLayer=null, relinkMode=false;
+
+    function removePreview(){
+      if(previewLayer){ map.removeLayer(previewLayer); previewLayer=null; }
+    }
+
+    function removeDrawLayer(){
+      if(drawLayer){ map.removeLayer(drawLayer); drawLayer=null; }
+    }
+
+    function stopRelink(){
+      relinkMode=false;
+      removePreview();
+    }
+
+    function startDraw(){
+      drawMode=true;
+      drawPoints=[];
+      removeDrawLayer();
+      btnDrawFinish.style.display='';
+      btnDrawUndo.style.display='';
+      modeHint.textContent='Кликай по карте, ставь точки. «Завершить рисование» — чтобы сформировать полигон.';
+    }
+
+    function stopDraw(clear){
+      drawMode=false;
+      btnDrawFinish.style.display='none';
+      btnDrawUndo.style.display='none';
+      if(clear){
+        drawPoints=[];
+        removeDrawLayer();
+      }
+    }
+
+    btnRelink.onclick = ()=>{
+      stopDraw(true);
+      relinkMode=true;
+      modeHint.textContent='Кликни на карте рядом со зданием — найдём ближайший контур (OSM).';
+    };
+
+    btnDraw.onclick = ()=>{
+      stopRelink();
+      startDraw();
+    };
+
+    btnDrawFinish.onclick = ()=>{
+      if(drawPoints.length<3) return alert('Нужно минимум 3 точки.');
+      removePreview();
+      previewLayer = L.polygon(drawPoints, { color:'#111', weight:2, fillColor:DEFAULT_BASE_COLOR, fillOpacity:.5 }).addTo(map);
+      stopDraw(false);
+      modeHint.textContent='Контур нарисован. Нажми «Сохранить».';
+    };
+
+    btnDrawUndo.onclick = ()=>{
+      drawPoints.pop();
+      removeDrawLayer();
+      if(drawPoints.length){
+        const pts = drawPoints.slice();
+        if(pts.length>=3) pts.push(pts[0]);
+        drawLayer = L.polyline(pts,{color:'#111',weight:2}).addTo(map);
+      }
+    };
+
+    btnClearPoly.onclick = ()=>{
+      it.polygon=null;
+      state.db.updated_at=new Date().toISOString();
+      applyBaseVisibility();
+      renderBaseList();
+      const editor = document.querySelector(`.inline-editor[data-editor-for="${CSS.escape(it.id)}"]`);
+      if(editor){
+        const msg = editor.querySelector('[data-role="message"]');
+        if(msg){ msg.className='muted'; msg.textContent='Полигон удалён (локально).'; }
+      }
+    };
+
+    btnSave.onclick = async ()=>{
+      it.title = eTitle.value.trim();
+      it.city = eCity.value.trim();
+      if(previewLayer){
+        const ring = previewLayer.getLatLngs()[0];
+        it.polygon = ringLatLng_to_LonLat(ring);
+      }
+      state.db.updated_at = new Date().toISOString();
+      ensureItemSourceKey(it);
+      refreshDbSourceStats();
+      try{
+        const res = await saveDb();
+        cleanupBaseEditor();
+        renderBaseList();
+        applyBaseVisibility();
+        $('loadMsg').textContent = res;
+        $('loadMsg').className = 'muted ok';
+      }
+      catch(err){
+        editMsg.className='muted dangerText';
+        editMsg.textContent = err.message;
+      }
+    };
+
+    btnCancel.onclick = ()=>{
+      cleanupBaseEditor();
+      renderBaseList();
+    };
+
+    const mapClick = (e)=>{
+      if(drawMode){
+        drawPoints.push(e.latlng);
+        removeDrawLayer();
+        const pts = drawPoints.slice();
+        if(pts.length>=3) pts.push(pts[0]);
+        drawLayer = L.polyline(pts,{color:'#111',weight:2}).addTo(map);
+        return;
+      }
+      if(relinkMode){
+        modeHint.textContent='Ищу ближайший контур…';
+        fetchOverpassPolygon({lon:e.latlng.lng,lat:e.latlng.lat}, 500).then(ring=>{
+          if(!ring){
+            modeHint.textContent='Не нашёл контур. Кликни ближе и повтори.';
+            return;
+          }
+          removePreview();
+          previewLayer = L.polygon(ringLonLat_to_LatLng(ring), { color:'#111', weight:2, fillColor:DEFAULT_BASE_COLOR, fillOpacity:.5 }).addTo(map);
+          map.fitBounds(previewLayer.getBounds().pad(0.2));
+          modeHint.textContent='Контур найден. Нажми «Сохранить».';
+        });
+      }
+    };
+
+    const mapDbl = ()=>{
+      if(drawMode){
+        stopDraw(true);
+        modeHint.textContent='Рисование отменено.';
+      }
+    };
+
+    map.on('click', mapClick);
+    map.on('dblclick', mapDbl);
+
+    state.baseEditorCleanup = ()=>{
+      map.off('click', mapClick);
+      map.off('dblclick', mapDbl);
+      removeDrawLayer();
+      removePreview();
+      container.classList.remove('open');
+      container.innerHTML='';
+    };
+  }
+
+  // --- Список базы
+  function renderBaseList(){
+    const host=$('itemsList');
+    cleanupBaseEditor({preserveEditingId:true});
+    host.innerHTML='';
+    const filtered = state.db.items.filter(it =>
+      (state.cityFilter.size===0 || state.cityFilter.has((it.city||'').trim().toLowerCase())) &&
+      (!state.searchQuery || norm(`${it.city} ${it.title}`).includes(norm(state.searchQuery)))
+    );
+    $('countLbl').textContent = state.db.items.length;
+    $('searchCount').textContent = `${filtered.length} совпад.`;
+
+    if(state.baseCollapsed){
+      return;
+    }
+
+    filtered.slice().sort((a,b)=> (a.city||'').localeCompare(b.city||'', 'ru') || (a.title||'').localeCompare(b.title||'', 'ru')).forEach(it=>{
+      const div=document.createElement('div');
+      div.className='item'+(state.selectedBaseId===it.id?' active':'');
+      div.dataset.id=it.id;
+      const checked = state.baseVisibleIds.has(it.id) ? 'checked' : '';
+      const inOther = state.addrToOrder.has(it.id);
+      div.innerHTML = `
+        <label class="vis"><input type="checkbox" class="visToggle" ${checked} /></label>
+        <div>
+          <div class="title">${esc(it.title||'(без названия)')}</div>
+          <div class="muted">${it.city||'Без города'} • ${it.polygon&&it.polygon.length>=3?'Контур есть':'Контур не задан'} ${inOther? '• <span class="dangerText">в наряде</span>':''}</div>
+        </div>
+        <div class="act">
+          <button class="ghost" title="Показать">Показать</button>
+          <button class="ghost" title="Редактировать">✏️</button>
+          <button class="ghost" title="Удалить">🗑️</button>
+        </div>`;
+
+      const visToggle = div.querySelector('.visToggle');
+      visToggle.onchange = ()=>{ if(visToggle.checked) state.baseVisibleIds.add(it.id); else state.baseVisibleIds.delete(it.id); applyBaseVisibility(); };
+      const [btnShow, btnEdit, btnDel] = div.querySelectorAll('.act button');
+      btnShow.onclick = ()=>{ state.baseVisibleIds.add(it.id); applyBaseVisibility(); focusBaseItem(it.id, {scroll:true}); const cb=div.querySelector('.visToggle'); if(cb) cb.checked=true; };
+      btnEdit.onclick = ()=> openBaseEditor(it.id);
+      btnDel.onclick = ()=> deleteBaseItem(it.id);
+
+      const editor = document.createElement('div');
+      editor.className='inline-editor';
+      editor.dataset.editorFor = it.id;
+      div.appendChild(editor);
+
+      if(state.editingBaseId === it.id){
+        mountBaseEditor(it, editor);
+      }
+
+      host.appendChild(div);
+    });
+  }
+
+  function updateBasePanelUI(){
+    if(btnBasePanelToggle){
+      const label = state.baseCollapsed ? 'Развернуть список' : 'Свернуть список';
+      btnBasePanelToggle.title = label;
+      btnBasePanelToggle.setAttribute('aria-label', label);
+      btnBasePanelToggle.innerHTML = state.baseCollapsed ? ICONS.baseExpand : ICONS.baseCollapse;
+    }
+    if(basePanelBody){
+      basePanelBody.classList.toggle('hidden', state.baseCollapsed);
+    }
+  }
+
+  function updateBaseMapButtons(){
+    if(btnBaseShow){ btnBaseShow.disabled = !state.baseMapHidden; }
+    if(btnBaseHide){ btnBaseHide.disabled = state.baseMapHidden; }
+  }
+
+  function updateSidebarToggle(){
+    if(!sidebarToggle) return;
+    const label = state.sidebarCollapsed ? 'Показать меню' : 'Скрыть меню';
+    sidebarToggle.title = label;
+    sidebarToggle.setAttribute('aria-label', label);
+    sidebarToggle.innerHTML = state.sidebarCollapsed ? ICONS.sidebarExpand : ICONS.sidebarCollapse;
+  }
+
+  function renderQuickCityFilters(){
+    if(!quickCityFilters) return;
+    quickCityFilters.querySelectorAll('.chip').forEach(chip=>{
+      const key = (chip.dataset.city||'').trim().toLowerCase();
+      const active = key && state.cityFilter.has(key);
+      chip.classList.toggle('active', !!active);
+    });
+  }
+  function focusBaseItem(id,{scroll=true}={}){
+    state.selectedBaseId=id; renderBaseList();
+    const layer=state.features.get(id); if(layer && map.hasLayer(layer)) map.fitBounds(layer.getBounds().pad(0.3));
+    if(scroll){ const el=document.querySelector(`#itemsList .item[data-id="${CSS.escape(id)}"]`); el && el.scrollIntoView({block:'center', behavior:'smooth'}); }
+  }
+  function onBasePolygonClick(id){ if(state.activeOrderId){ toggleAddrInActiveOrder(id); } else { focusBaseItem(id,{scroll:false}); } }
+
+  // --- Чипы городов
+  function uniqueCities(){ const set=new Set(); state.db.items.forEach(it=>{ const c=String(it.city||'').trim(); if(c) set.add(c); }); return Array.from(set).sort((a,b)=>a.localeCompare(b,'ru')); }
+  function renderCityChips(){
+    const host=$('cityChips'); host.innerHTML='';
+    const all=document.createElement('span'); all.className='chip'+(state.cityFilter.size===0?' active':''); all.textContent='Все'; all.onclick=()=>{ state.cityFilter.clear(); renderBaseList(); applyBaseVisibility(); renderCityChips(); }; host.appendChild(all);
+    uniqueCities().forEach(city=>{ const key=city.trim().toLowerCase(); const chip=document.createElement('span'); chip.className='chip'+(state.cityFilter.has(key)?' active':''); chip.textContent=city; chip.onclick=()=>{ if(state.cityFilter.has(key)) state.cityFilter.delete(key); else state.cityFilter.add(key); renderBaseList(); applyBaseVisibility(); renderCityChips(); }; host.appendChild(chip); });
+    renderQuickCityFilters();
+  }
+
+  // --- Панель управления базой
+  if(btnBasePanelToggle){
+    btnBasePanelToggle.onclick = ()=>{
+      state.baseCollapsed = !state.baseCollapsed;
+      updateBasePanelUI();
+      renderBaseList();
+      applyBaseVisibility();
+    };
+  }
+
+  if(btnBaseShow){
+    btnBaseShow.onclick = ()=>{
+      state.baseMapHidden = false;
+      updateBaseMapButtons();
+      applyBaseVisibility();
+    };
+  }
+
+  if(btnBaseHide){
+    btnBaseHide.onclick = ()=>{
+      state.baseMapHidden = true;
+      updateBaseMapButtons();
+      applyBaseVisibility();
+    };
+  }
+
+  if(sidebarToggle){
+    sidebarToggle.addEventListener('click', ()=>{
+      setSidebarCollapsed(!state.sidebarCollapsed);
+    });
+  }
+
+  if(quickCityFilters){
+    quickCityFilters.addEventListener('click', (e)=>{
+      const chip = e.target.closest('.chip[data-city]');
+      if(!chip) return;
+      const key = (chip.dataset.city||'').trim().toLowerCase();
+      if(!key) return;
+      if(state.cityFilter.has(key)) state.cityFilter.delete(key); else state.cityFilter.add(key);
+      renderCityChips();
+      renderBaseList();
+      applyBaseVisibility();
+    });
+  }
+
+  // --- Добавить адрес
+  $('btnAddBase').onclick = ()=>{
+    const id = uid(); const it = { id, title:'Новый адрес', city:'', polygon:null };
+    state.db.items.push(it);
+    ensureItemSourceKey(it);
+    refreshDbSourceStats();
+    state.baseVisibleIds.add(id); state.selectedBaseId=id; openBaseEditor(id);
+  };
+
+  // --- Инлайн-редактор базы (relink/draw)
+  function openBaseEditor(id){
+    const it = state.db.items.find(x=>x.id===id); if(!it) return;
+    state.selectedBaseId=id;
+    state.editingBaseId=id;
+    renderBaseList();
+    const row = document.querySelector(`#itemsList .item[data-id=\"${CSS.escape(id)}\"]`);
+    if(row){ row.scrollIntoView({block:'center', behavior:'smooth'}); }
+  }
+  function deleteBaseItem(id){
+    const it = state.db.items.find(x=>x.id===id); if(!it) return;
+    if(!confirm(`Удалить адрес:\n\n${it.title || '(без названия)'}?`)) return;
+    if(state.editingBaseId===id){ cleanupBaseEditor(); }
+    const layer = state.features.get(id); if(layer && map.hasLayer(layer)) map.removeLayer(layer);
+    state.features.delete(id); state.baseVisibleIds.delete(id);
+    state.db.items = state.db.items.filter(x=>x.id!==id);
+    state.dbSourceById.delete(id);
+    refreshDbSourceStats();
+    state.db.updated_at=new Date().toISOString();
+    saveDb().then(msg=>{ $('loadMsg').textContent=`Удалено. ${msg}`; $('loadMsg').className='muted ok'; renderBaseList(); applyBaseVisibility(); })
+             .catch(err=>{ $('loadMsg').textContent=`Удалено локально. Ошибка сохранения: ${err.message}`; $('loadMsg').className='muted dangerText'; renderBaseList(); applyBaseVisibility(); });
+  }
+
+  // --- Nominatim (OSM)
+  let nomiTimer=null;
+  async function nominatim(q){
+    if(!q || q.trim().length<3){ suggestBox.style.display='none'; suggestBox.innerHTML=''; return; }
+    const url = new URL('https://nominatim.openstreetmap.org/search');
+    url.searchParams.set('q', q); url.searchParams.set('format','jsonv2'); url.searchParams.set('limit','8'); url.searchParams.set('addressdetails','1'); url.searchParams.set('accept-language','ru');
+    const r = await fetch(url.toString(), { headers:{'Accept':'application/json'} }); if(!r.ok) return;
+    const arr = await r.json(); suggestBox.style.display=''; suggestBox.innerHTML = ''; searchCount.textContent = `${arr.length} в OSM`;
+    arr.forEach((it)=>{
+      const city = it.address?.city || it.address?.town || it.address?.village || it.address?.municipality || '';
+      const road = it.address?.road || it.address?.pedestrian || it.address?.footway || '';
+      const house = it.address?.house_number || '';
+      const title = ['г. '+city, road && ('ул. '+road), house].filter(Boolean).join(', ');
+      const div = document.createElement('div'); div.className='sg-item';
+      div.innerHTML = `
+        <div class="sg-top">
+          <div class="sg-title">${esc(title || it.display_name)}</div>
+          <button class="ghost sg-zoom">Показать</button>
+        </div>
+        <div class="muted" style="margin-top:4px;">${esc(it.display_name)}</div>
+        <div class="row" style="margin-top:6px;">
+          <button class="primary sg-add">Добавить как новый адрес</button>
+        </div>`;
+      const btnZoom = div.querySelector('.sg-zoom'); const btnAdd  = div.querySelector('.sg-add');
+      btnZoom.onclick = ()=> zoomToSuggestion(it);
+      btnAdd.onclick  = ()=> addFromSuggestion(it);
+      suggestBox.appendChild(div);
+    });
+  }
+  function debouncedNominatim(q){ clearTimeout(nomiTimer); nomiTimer = setTimeout(()=>nominatim(q), 250); }
+  function zoomToSuggestion(sg){ const lat=+sg.lat, lon=+sg.lon; if(state.searchMarker){ map.removeLayer(state.searchMarker); state.searchMarker=null; } state.searchMarker = L.marker([lat,lon]).addTo(map).bindPopup(esc(sg.display_name)+'<br/><button id="ppAddBtn">Добавить как новый</button>').openPopup(); map.setView([lat,lon], 18); setTimeout(()=>{ const btn = document.getElementById('ppAddBtn'); if(btn) btn.onclick = ()=> addFromSuggestion(sg); }, 0); }
+  async function addFromSuggestion(sg){
+    const city = sg.address?.city || sg.address?.town || sg.address?.village || sg.address?.municipality || '';
+    const road = sg.address?.road || sg.address?.pedestrian || sg.address?.footway || '';
+    const house = sg.address?.house_number || '';
+    const title = ['г. '+(city||'').trim(), road && ('ул. '+road), house].filter(Boolean).join(', ').replace(/\s+,/g,',');
+    const id = uid(); const it = { id, title: title || sg.display_name, city: city || '', polygon: null };
+    state.db.items.push(it);
+    ensureItemSourceKey(it);
+    refreshDbSourceStats();
+    state.baseVisibleIds.add(id); state.selectedBaseId = id;
+    try{ const ring = await fetchOverpassPolygon({lon:+sg.lon, lat:+sg.lat}, 400); if(ring){ it.polygon = ring; } }catch(_){ }
+    renderBaseList(); applyBaseVisibility(); const row = document.querySelector(`#itemsList .item[data-id="${CSS.escape(id)}"]`); row && row.scrollIntoView({block:'center', behavior:'smooth'});
+  }
+
+  // --- Overpass helper
+  async function fetchOverpassPolygon({ lon, lat }, radius = 500){
+    const EPS=['https://overpass.kumi.systems/api/interpreter','https://overpass-api.de/api/interpreter','https://overpass.openstreetmap.ru/api/interpreter'];
+    const q=`[out:json][timeout:60];(way["building"](around:${radius},${lat},${lon});relation["building"](around:${radius},${lat},${lon}););out body geom;`;
+    for(const ep of EPS){
+      try{ const r=await fetch(ep,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8'},body:new URLSearchParams({data:q})}); if(!r.ok) continue; const j=await r.json(); const a=j.elements||[]; if(!a.length) continue; let best=null, bestD=Infinity; for(const el of a){ const g=el.geometry; if(!Array.isArray(g)||g.length<4) continue; const ring=g.map(p=>[p.lon,p.lat]); let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity; ring.forEach(([x,y])=>{ if(x<minX)minX=x; if(x>maxX)maxX=x; if(y<minY)minY=y; if(y>maxY)maxY=y; }); const cx=(minX+maxX)/2, cy=(minY+maxY)/2; const d=(cx-lon)*(cx-lon)+(cy-lat)*(cy-lat); if(d<bestD){bestD=d;best=ring;} } if(best){ const f=best[0], l=best[best.length-1]; if(f[0]!==l[0]||f[1]!==l[1]) best.push([f[0],f[1]]); return best; } }catch(e){ /* try next */ }
+    }
+    return null;
+  }
+
+/* ====== ЧАСТЬ 1 закончилась. Вставь ЧАСТЬ 2 сразу ниже, ничего не удаляя. Скрипт и IIFE ещё НЕ закрыты. ====== */
+  // =========================
+  // ===== Н А Р Я Д Ы ======
+  // =========================
+
+  // Слои и рендер
+  function ensureOrderLayer(order){
+    let group = state.orderLayers.get(order.id);
+    if(!group){
+      group = L.featureGroup();
+      group._orderId = order.id;
+      group.addTo(map);
+      state.orderLayers.set(order.id, group);
+    }
+    return group;
+  }
+  function refreshOrderLayer(order){
+    const group = ensureOrderLayer(order);
+    group.clearLayers();
+    const layerColor = normalizeHexColor(order.color, DEFAULT_ORDER_COLOR);
+    if(layerColor !== order.color){
+      order.color = layerColor;
+    }
+    order.items.forEach(({id})=>{
+      const it = state.db.items.find(x=>x.id===id);
+      if(!it || !Array.isArray(it.polygon) || it.polygon.length<3) return;
+      const poly = L.polygon(ringLonLat_to_LatLng(it.polygon), {
+        color:order.color, weight:2, fillColor:order.color, fillOpacity:.9
+      });
+      poly.on('click',()=>{ if(state.activeOrderId===order.id) toggleAddrInActiveOrder(id); });
+      poly.bindTooltip(`${esc(it.title)}<br>Кол: ${order.items.find(x=>x.id===id)?.qty||0}`, {sticky:true});
+      group.addLayer(poly);
+      const center = poly.getBounds().getCenter();
+      const icon = L.divIcon({
+        className:'house-label',
+        html:`<span class="hl" style="border-color:${order.color}; color:${order.color};">${esc(extractHouse(it.title))}</span>`
+      });
+      const label = L.marker(center, { icon, interactive:false });
+      group.addLayer(label);
+    });
+  }
+  function renderOrdersList(){
+    const host = $('ordersList');
+    host.innerHTML = '';
+    if(!state.orders.length){
+      host.innerHTML = '<div class="muted">Пока нет нарядов.</div>';
+      updateOrdersMapButtons();
+      return;
+    }
+    state.orders
+      .slice()
+      .sort((a,b)=> (b.created_at||'').localeCompare(a.created_at||''))
+      .forEach(order=>{
+        const colorHex = normalizeHexColor(order.color, DEFAULT_ORDER_COLOR);
+        if(colorHex !== order.color){ order.color = colorHex; }
+        const total = order.items.reduce((s,x)=> s + (Number(x.qty)||0), 0);
+        const div=document.createElement('div');
+        div.className='item'+(state.activeOrderId===order.id?' active':'');
+        div.dataset.id=order.id;
+        const group = ensureOrderLayer(order);
+        const vis = group && map.hasLayer(group) ? 'checked' : '';
+        div.innerHTML = `
+          <label class="vis"><input type="checkbox" class="visOrder" ${vis} /></label>
+          <div>
+            <div class="title">${esc(order.company)} • <span style="color:${order.color}">●</span> ${order.code}</div>
+            <div class="muted">Адресов: ${order.items.length} • Кол всего: ${total}</div>
+          </div>
+          <div class="act">
+            <button class="ghost btnGenerate" title="Сформировать наряд">📄</button>
+            <button class="ghost btnEdit" title="Редактировать">✏️</button>
+            <button class="ghost btnFit" title="Показать на карте">Показать</button>
+            <button class="ghost btnDel" title="Удалить">🗑️</button>
+          </div>`;
+        div.querySelector('.visOrder').onchange = (e)=>{
+          const g=ensureOrderLayer(order);
+          if(e.target.checked){
+            if(g && !map.hasLayer(g)) g.addTo(map);
+          } else {
+            if(g && map.hasLayer(g)) map.removeLayer(g);
+          }
+          updateOrdersMapButtons();
+        };
+        div.querySelector('.btnFit').onclick = ()=>{
+          const g=ensureOrderLayer(order);
+          if(g && g.getBounds && g.getLayers().length){ map.fitBounds(g.getBounds().pad(0.2)); }
+          addBaseLabelsIfZoom();
+        };
+        div.querySelector('.btnGenerate').onclick = ()=> generateOrderPackage(order);
+        div.querySelector('.btnEdit').onclick = ()=> openOrderEditor(order.id);
+        div.querySelector('.btnDel').onclick = ()=> deleteOrder(order.id);
+        host.appendChild(div);
+      });
+    updateOrdersMapButtons();
+  }
+
+  function updateOrdersMapButtons(){
+    if(btnOrdersShowAll){
+      const anyHidden = state.orders.some(order=>{
+        const group = state.orderLayers.get(order.id);
+        return !(group && map.hasLayer(group));
+      });
+      btnOrdersShowAll.disabled = !anyHidden;
+    }
+    if(btnOrdersHideAll){
+      const anyVisible = state.orders.some(order=>{
+        const group = state.orderLayers.get(order.id);
+        return !!(group && map.hasLayer(group));
+      });
+      btnOrdersHideAll.disabled = !anyVisible;
+    }
+  }
+
+  // Загрузка XLSX/CSV (кнопки в разметке уже есть)
+  const fileInput=$('fileInput'),
+        btnClearUpload=$('btnClearUpload'),
+        uploadStats=$('uploadStats'),
+        matchTableWrap=$('matchTableWrap'),
+        matchTable=$('matchTable'),
+        companyInput=$('companyInput'),
+        colorInput=$('colorInput'),
+        btnCreateOrder=$('btnCreateOrder');
+
+  // === Расширенная нормализация и сопоставление адресов ===
+  function simpleNormalize(s){
+    if(!s) return '';
+    return String(s)
+      .toLowerCase()
+      .replace(/ё/g,'е')
+      .replace(/["'«»]/g,' ')
+      .replace(/[\.,;]/g,' ')
+      .replace(/(^|\s)(?:г|город|гор|с|село|сел|пос|поселок|посёлок|поселение|дер|деревня|пгт|кп|ст|станица|сл|слобода|рп|рабочийпоселок|рабочийпосёлок|мкр|мкрн|микрорайон|аул|аал|х|хутор|дп|дачныйпоселок|дачныйпосёлок|снт|днт|п)(?=\s|$)/g,'$1 ')
+      .replace(/(^|\s)(?:ул\.?|улица|пер\.?|переулок|пр\.?|проспект|пр\-?т|пр\-?д|пр\-?кт|проезд|бульвар|булвар|шоссе|тракт|аллея|площадь|пл\.?|дорога|наб\.?|набережная)(?=\s|$)/g,'$1 ')
+      .replace(/(^|\s)(\d+)[-–]?(?:я|й|ая|ый|ой|ий|ое|ые|ье|ая|яя|го|е|ю)(?=\s|$)/g,'$1$2')
+      .replace(/\s+/g,' ')
+      .trim();
+  }
+  function extractStreetHouse(s){
+    if(!s) return {street:'',house:''};
+    const t = simpleNormalize(s);
+    // улица + номер (допускаем буквы/дроби)
+    const m = t.match(/(.+?)\s+(\d+[0-9а-яa-z\/\-]*)$/i);
+    if(m) return {street:m[1].trim(), house:m[2].trim()};
+    // fallback
+    const m2 = t.match(/(.+?)\s+(\d+[а-я]?)/i);
+    return { street: (m2?m2[1]:'').trim(), house: (m2?m2[2]:'').trim() };
+  }
+  function matchAddressToBase(addrText){
+    const addrNorm = simpleNormalize(addrText||'');
+    if(!addrNorm) return null;
+
+    // 0) быстрые точные проверки
+    for(const it of state.db.items){
+      if(simpleNormalize(it.title) === addrNorm) return it.id;
+      if(simpleNormalize(`${it.city||''} ${it.title||''}`) === addrNorm) return it.id;
+    }
+
+    // 1) улица/дом
+    const {street,house} = extractStreetHouse(addrText);
+    if(street && house){
+      for(const it of state.db.items){
+        const baseNorm = simpleNormalize(`${it.city||''} ${it.title||''}`);
+        if(baseNorm.includes(street) && baseNorm.includes(house)) return it.id;
+      }
+    }
+
+    // 2) includes (обе стороны)
+    for(const it of state.db.items){
+      const baseNorm = simpleNormalize(`${it.city||''} ${it.title||''}`);
+      if(baseNorm.includes(addrNorm) || addrNorm.includes(baseNorm)) return it.id;
+    }
+
+    // 3) только улица
+    if(street){
+      for(const it of state.db.items){
+        if(simpleNormalize(`${it.city||''} ${it.title||''}`).includes(street)) return it.id;
+      }
+    }
+
+    // 4) номер без букв/дробей + улица без пробелов
+    if(house){
+      const houseDigits = house.replace(/[^\d]/g,'');
+      const streetFlat = (street||'').replace(/\s+/g,'');
+      for(const it of state.db.items){
+        const b = simpleNormalize(`${it.city||''} ${it.title||''}`);
+        const bDigits = b.replace(/[^\d]/g,'');
+        if(bDigits.includes(houseDigits) && b.replace(/\s+/g,'').includes(streetFlat)) return it.id;
+      }
+    }
+    return null;
+  }
+
+  const HEADER_ALIASES = {
+    address: ['адрес', 'address'],
+    city: ['наспункт', 'населенныипункт', 'населенныйпункт', 'населённыйпункт', 'населёныйпункт', 'населеныйпункт', 'город', 'г'],
+    street: ['улица', 'улицы', 'ул', 'street', 'проезд', 'проспект', 'пр', 'переулок', 'пер', 'бульвар', 'булвар', 'шоссе', 'тракт', 'аллея', 'площадь', 'пл', 'дорога'],
+    house: ['дом', 'номердома', 'нодома', 'д', 'строение', 'стр', 'корпус', 'корп', 'кор', 'литер', 'лит', 'house'],
+    qty: ['кол', 'колво', 'количество', 'qty', 'count']
+  };
+
+  function normalizeHeaderKey(name){
+    return String(name||'')
+      .replace(/^[\uFEFF\ufeff]/,'')
+      .toLowerCase()
+      .replace(/ё/g,'е')
+      .replace(/[^a-z0-9а-я]+/g,'')
+      .trim();
+  }
+
+  function collectHeaders(headerRow){
+    const seen = new Set();
+    const headers = [];
+    headerRow.forEach(cell=>{
+      const original = String(cell ?? '').replace(/[\uFEFF\ufeff]/g,'').trim();
+      if(!original || /^__empty/i.test(original) || seen.has(original)) return;
+      seen.add(original);
+      headers.push({ original, norm: normalizeHeaderKey(original) });
+    });
+    return headers;
+  }
+
+  function matchesAlias(norm, aliases){
+    if(!norm) return false;
+    for(const alias of aliases){
+      if(norm === alias) return true;
+    }
+    for(const alias of aliases){
+      if(alias.length <= 1) continue;
+      if(norm.includes(alias)) return true;
+    }
+    return false;
+  }
+
+  function detectHeaderRow(table){
+    let bestIdx = -1;
+    let bestScore = 0;
+    const limit = Math.min(table.length, 40);
+    for(let i=0;i<limit;i++){
+      const row = Array.isArray(table[i]) ? table[i] : [];
+      const cleaned = row.map(cell=> String(cell ?? '').replace(/[\uFEFF\ufeff]/g,'').trim());
+      if(!cleaned.some(Boolean)) continue;
+      const normalized = cleaned.map(normalizeHeaderKey);
+      let score = 0;
+      const has = { address:false, city:false, street:false, house:false, qty:false };
+      normalized.forEach(n=>{
+        if(matchesAlias(n, HEADER_ALIASES.address)){ score += 6; has.address = true; }
+        if(matchesAlias(n, HEADER_ALIASES.city)){ score += 3; has.city = true; }
+        if(matchesAlias(n, HEADER_ALIASES.street)){ score += 3; has.street = true; }
+        if(matchesAlias(n, HEADER_ALIASES.house)){ score += 2; has.house = true; }
+        if(matchesAlias(n, HEADER_ALIASES.qty)){ score += 2; has.qty = true; }
+      });
+      if(has.address && (has.city || has.street || has.house)) score += 2;
+      if(has.city && has.street && has.house) score += 2;
+      if(score > bestScore){
+        bestScore = score;
+        bestIdx = i;
+      }
+    }
+    if(bestIdx === -1 || bestScore < 2) return null;
+    const cols = Math.max(
+      Array.isArray(table[bestIdx]) ? table[bestIdx].length : 0,
+      ...table.slice(bestIdx + 1).map(row => Array.isArray(row) ? row.length : 0)
+    );
+    const headerRow = Array.from({length:cols}, (_,i)=>{
+      const cell = Array.isArray(table[bestIdx]) ? table[bestIdx][i] : '';
+      return typeof cell === 'string' ? cell.trim() : (cell ?? '');
+    });
+    const dataRows = table.slice(bestIdx + 1).map(row=>{
+      const arr = [];
+      for(let i=0;i<cols;i++){
+        arr[i] = Array.isArray(row) && i < row.length ? row[i] : '';
+      }
+      return arr;
+    });
+    return { headerRow, dataRows };
+  }
+
+  function rowsToObjects(headerRow, dataRows){
+    const keys = headerRow.map(cell=> String(cell ?? '').replace(/[\uFEFF\ufeff]/g,'').trim());
+    return dataRows
+      .map(row=>{
+        const arr = Array.isArray(row) ? row : [];
+        const obj={};
+        keys.forEach((key, idx)=>{
+          if(!key || /^__empty/i.test(key)) return;
+          obj[key] = arr[idx];
+        });
+        return obj;
+      })
+      .filter(obj=> Object.values(obj).some(v=> String(v ?? '').trim()));
+  }
+
+  function findHeader(headers, aliases){
+    for(const alias of aliases){
+      const hit = headers.find(h=>h.norm === alias);
+      if(hit) return hit.original;
+    }
+    for(const alias of aliases){
+      if(alias.length<=1) continue;
+      const hit = headers.find(h=> h.norm && h.norm.includes(alias));
+      if(hit) return hit.original;
+    }
+    return null;
+  }
+
+  function findAllHeaders(headers, aliases){
+    const used = new Set();
+    const result = [];
+    aliases.forEach(alias=>{
+      headers.forEach(h=>{
+        if(used.has(h.original) || !h.norm) return;
+        if(h.norm === alias){
+          result.push(h.original);
+          used.add(h.original);
+        }
+      });
+    });
+    aliases.forEach(alias=>{
+      if(alias.length<=1) return;
+      headers.forEach(h=>{
+        if(used.has(h.original) || !h.norm) return;
+        if(h.norm.includes(alias)){
+          result.push(h.original);
+          used.add(h.original);
+        }
+      });
+    });
+    return result;
+  }
+
+  function pickText(row, key){
+    if(!key) return '';
+    const val = row[key];
+    if(val===undefined || val===null) return '';
+    if(typeof val==='string') return val.trim();
+    if(typeof val==='number') return Number.isNaN(val)? '' : String(val);
+    return String(val).trim();
+  }
+
+  function pickNumber(row, key){
+    if(!key) return 0;
+    const val = row[key];
+    if(val===undefined || val===null) return 0;
+    if(typeof val==='number') return Number.isNaN(val)? 0 : val;
+    if(typeof val==='string'){
+      const normalized = val.replace(/\s+/g,'').replace(',', '.');
+      const num = Number(normalized);
+      return Number.isNaN(num)? 0 : num;
+    }
+    return 0;
+  }
+
+  let uploadRows=[]; // [{address, qty, foundId|null, hasPolygon:boolean}]
+
+  fileInput.addEventListener('change', handleFile);
+  btnClearUpload.onclick = ()=>{
+    fileInput.value=''; uploadRows=[]; uploadStats.textContent='';
+    matchTableWrap.style.display='none'; matchTable.innerHTML='';
+  };
+
+  async function handleFile(){
+    const file = fileInput.files?.[0]; if(!file) return;
+    ensureOrderCreateOpen();
+    const buf = await file.arrayBuffer();
+    let table = [];
+    if(/\.csv$/i.test(file.name)){
+      const txt = new TextDecoder('utf-8').decode(new Uint8Array(buf));
+      const commaCount = (txt.match(/,/g) || []).length;
+      const semiCount = (txt.match(/;/g) || []).length;
+      const tabCount = (txt.match(/\t/g) || []).length;
+      let fs = ',';
+      if(tabCount && tabCount >= commaCount && tabCount >= semiCount){
+        fs = '\t';
+      } else if(semiCount > commaCount){
+        fs = ';';
+      }
+      const wb = XLSX.read(txt, {type:'string', FS: fs});
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      table = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+    } else {
+      const wb = XLSX.read(buf, {type:'array'});
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      table = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+    }
+
+    table = table.filter(row=> Array.isArray(row) ? row.some(cell=> String(cell ?? '').trim()) : false);
+    const headerInfo = detectHeaderRow(table);
+    if(!headerInfo){
+      uploadRows=[];
+      uploadStats.innerHTML = 'Не удалось определить строку заголовков в файле.';
+      matchTableWrap.style.display='none';
+      matchTable.innerHTML='';
+      return;
+    }
+
+    const headers = collectHeaders(headerInfo.headerRow);
+    const rows = rowsToObjects(headerInfo.headerRow, headerInfo.dataRows);
+    const addressKey = findHeader(headers, HEADER_ALIASES.address);
+    const cityKey = findHeader(headers, HEADER_ALIASES.city);
+    const streetKey = findHeader(headers, HEADER_ALIASES.street);
+    const houseKeys = findAllHeaders(headers, HEADER_ALIASES.house);
+    const qtyKey = findHeader(headers, HEADER_ALIASES.qty);
+    const qtyKeys = qtyKey ? [qtyKey] : findAllHeaders(headers, HEADER_ALIASES.qty);
+    const qtyMissing = qtyKeys.length===0;
+
+    const mapped = rows.map(row=>{
+      let address = pickText(row, addressKey);
+      if(!address){
+        const parts=[];
+        const city = pickText(row, cityKey);
+        if(city) parts.push(city);
+        const street = pickText(row, streetKey);
+        if(street) parts.push(street);
+        const houseParts = houseKeys.map(h=>pickText(row, h)).filter(Boolean);
+        if(houseParts.length) parts.push(houseParts.join(' '));
+        address = parts.filter(Boolean).join(', ');
+      }
+      let qty = 0;
+      if(qtyKeys.length){
+        qty = pickNumber(row, qtyKeys[0]);
+      }
+      if(Number.isNaN(qty) || qty<0) qty = 0;
+      return { address: address.trim(), qty };
+    }).filter(x=>x.address);
+
+    if(!mapped.length){
+      uploadRows=[];
+      uploadStats.innerHTML = 'Не удалось найти адреса в файле.';
+      matchTableWrap.style.display='none';
+      matchTable.innerHTML='';
+      return;
+    }
+
+    uploadRows = mapped.map(r=>{
+      const foundId = matchAddressToBase(r.address);
+      let hasPolygon = false;
+      if(foundId){
+        const base = state.db.items.find(item=>item.id===foundId);
+        hasPolygon = !!(base && Array.isArray(base.polygon) && base.polygon.length>=3);
+      }
+      return { address:r.address, qty:r.qty, foundId, hasPolygon };
+    });
+
+    const hits = uploadRows.filter(x=>x.foundId);
+    const miss = uploadRows.filter(x=>!x.foundId);
+    let stats = `Всего строк: <b>${uploadRows.length}</b> • найдены в базе: <b>${hits.length}</b> • не найдены: <b>${miss.length}</b>`;
+    if(qtyMissing) stats += ' • <span class="dangerText">Колонка количества не найдена, все значения = 0</span>';
+    uploadStats.innerHTML = stats;
+    renderMatchTable();
+  }
+
+  function renderMatchTable(){
+    ensureOrderCreateOpen();
+    matchTableWrap.style.display='';
+    matchTable.innerHTML = '';
+    const thead = document.createElement('thead');
+    thead.innerHTML = '<tr><th>#</th><th>Адрес</th><th>Кол</th><th>Статус</th></tr>';
+    matchTable.appendChild(thead);
+    const tbody = document.createElement('tbody');
+    uploadRows.forEach((r,i)=>{
+      const tr=document.createElement('tr');
+      tr.className = r.foundId? 'hit' : 'miss';
+      let status;
+      if(r.foundId){
+        const badge = r.hasPolygon
+          ? '<span class="ok">контур есть</span>'
+          : '<span class="dangerText">контура нет</span>';
+        status = `Найден в базе • ${badge}`;
+      } else {
+        status = 'Не найден';
+      }
+      tr.innerHTML = `<td>${i+1}</td><td>${esc(r.address)}</td><td>${r.qty}</td><td>${status}</td>`;
+      tbody.appendChild(tr);
+    });
+    matchTable.appendChild(tbody);
+  }
+
+  // Создать наряд из найденных адресов
+  btnCreateOrder.onclick = ()=>{
+    const hits = uploadRows.filter(x=>x.foundId);
+    if(!hits.length) return alert('Нет найденных адресов, добавить нечего.');
+
+    const company = companyInput.value.trim() || 'Без названия';
+    const color = normalizeHexColor(colorInput.value || DEFAULT_ORDER_COLOR, DEFAULT_ORDER_COLOR);
+
+    const items=[]; const skipped=[];
+    hits.forEach(h=>{
+      if(state.addrToOrder.has(h.foundId)) skipped.push(h.address);
+      else items.push({id:h.foundId, qty: Number(h.qty)||0});
+    });
+    if(!items.length) return alert('Все адреса из файла уже есть в других нарядах.');
+
+    const order={ id: uid(), code: makeOrderCode(), company, color, items, created_at: new Date().toISOString() };
+    state.orders.push(order);
+    items.forEach(it=> state.addrToOrder.set(it.id, order.id));
+    refreshOrderLayer(order);
+    renderOrdersList();
+    // скрываем их из слоя базы
+    items.forEach(it=> state.baseVisibleIds.delete(it.id));
+    applyBaseVisibility();
+    openOrderEditor(order.id);
+    if(skipped.length) alert('Пропущены адреса, уже в других нарядах:\n\n'+skipped.join('\n'));
+    saveNaryads(true).catch(()=>{});
+  };
+
+  // Редактор наряда
+  function openOrderEditor(orderId){
+    state.activeOrderId = orderId;
+    const order = state.orders.find(x=>x.id===orderId); if(!order) return;
+    const host = $('orderEditPanel'); host.style.display=''; host.innerHTML = '';
+
+    const div=document.createElement('div');
+    div.innerHTML = `
+      <div class="title" style="margin-bottom:6px;">Редактирование: ${esc(order.company)} • <span id="orderColorDot" style="color:${order.color}">●</span> ${order.code}</div>
+      <div class="row" style="margin-bottom:8px;">
+        <input id="eCompany" type="text" value="${esc(order.company)}" />
+        <input id="eColor" type="color" value="${order.color}" />
+        <button id="eSave" class="primary">Сохранить</button>
+        <button id="eClose" class="ghost">Закрыть</button>
+      </div>
+      <div class="hint">Кликай по домам на карте, чтобы добавить/убрать их из наряда. Либо Shift+перетаскивание для выделения прямоугольником. Дома, попавшие в наряд, скрываются в слое базы.</div>
+      <div class="row" style="margin-top:8px;">
+        <button id="eSelectAllInView" class="ghost">Добавить дома в кадре</button>
+        <button id="eClearSelection" class="ghost">Очистить выделение</button>
+        <button id="eGenerate" class="primary">Сформировать наряд</button>
+      </div>
+      <div style="max-height:220px; overflow:auto; margin-top:8px;">
+        <table id="orderTable"></table>
+      </div>`;
+    host.appendChild(div);
+
+    const colorDot = div.querySelector('#orderColorDot');
+    const colorInput = div.querySelector('#eColor');
+    if(colorInput){
+      colorInput.addEventListener('input', (e)=>{
+        const val = e.target.value || order.color;
+        if(colorDot){ colorDot.style.color = val; }
+      });
+    }
+    const companyInput = div.querySelector('#eCompany');
+    div.querySelector('#eSave').onclick = ()=>{
+      order.company = companyInput ? (companyInput.value.trim()||'Без названия') : 'Без названия';
+      const nextColor = colorInput && colorInput.value ? colorInput.value : order.color;
+      order.color = normalizeHexColor(nextColor, order.color || DEFAULT_ORDER_COLOR);
+      if(colorInput){ colorInput.value = order.color; }
+      if(colorDot){ colorDot.style.color = order.color; }
+      refreshOrderLayer(order);
+      renderOrdersList();
+      renderOrderTable(order);
+      saveNaryads(true).catch(()=>{});
+    };
+    div.querySelector('#eClose').onclick = ()=>{ state.activeOrderId=null; host.style.display='none'; };
+    div.querySelector('#eSelectAllInView').onclick = ()=> selectAllBaseInViewIntoOrder(order);
+    div.querySelector('#eClearSelection').onclick = ()=>{ state.selection.clear(); };
+    div.querySelector('#eGenerate').onclick = ()=> generateOrderPackage(order);
+
+    renderOrderTable(order);
+    ensureOrderLayer(order).addTo(map);
+    const g=ensureOrderLayer(order);
+    if(g.getLayers().length) map.fitBounds(g.getBounds().pad(0.2));
+  }
+
+  function renderOrderTable(order){
+    const colorHex = normalizeHexColor(order.color, DEFAULT_ORDER_COLOR);
+    if(colorHex !== order.color){
+      order.color = colorHex;
+    }
+    const t=$('orderTable'); t.innerHTML='';
+    const thead=document.createElement('thead');
+    thead.innerHTML='<tr><th>#</th><th>Город</th><th>Улица</th><th>Дом</th><th>Цвет</th><th>Кол</th><th></th></tr>';
+    t.appendChild(thead);
+    const tbody=document.createElement('tbody');
+    order.items.forEach((it,i)=>{
+      const base=state.db.items.find(x=>x.id===it.id); if(!base) return;
+      const addr = extractOrderAddress(base);
+      const tr=document.createElement('tr');
+      tr.innerHTML=`
+        <td>${i+1}</td>
+        <td>${esc(addr.city)}</td>
+        <td>${esc(addr.street)}</td>
+        <td>${esc(addr.house)}</td>
+        <td><span class="color-dot" style="background:${order.color}"></span></td>
+        <td><input type="number" class="qty" min="0" value="${Number(it.qty)||0}" style="width:70px"></td>
+        <td><button class="ghost btnRemove">Убрать</button></td>`;
+      tr.querySelector('.qty').onchange = (e)=>{
+        it.qty = Number(e.target.value)||0;
+        refreshOrderLayer(order); renderOrdersList(); saveNaryads(true).catch(()=>{});
+      };
+      tr.querySelector('.btnRemove').onclick = ()=>{
+        removeAddrFromOrder(order.id, it.id); saveNaryads(true).catch(()=>{});
+      };
+      tbody.appendChild(tr);
+    });
+    t.appendChild(tbody);
+  }
+
+  function toggleAddrInActiveOrder(addrId){
+    const order = state.orders.find(x=>x.id===state.activeOrderId); if(!order) return;
+    if(state.addrToOrder.has(addrId) && state.addrToOrder.get(addrId)!==order.id){
+      return alert('Адрес уже в другом наряде.');
+    }
+    const idx = order.items.findIndex(x=>x.id===addrId);
+    if(idx===-1){
+      order.items.push({id:addrId, qty:0});
+      state.addrToOrder.set(addrId, order.id);
+      state.baseVisibleIds.delete(addrId);
+    } else {
+      order.items.splice(idx,1);
+      state.addrToOrder.delete(addrId);
+      state.baseVisibleIds.add(addrId);
+    }
+    refreshOrderLayer(order); renderOrdersList(); renderOrderTable(order); applyBaseVisibility(); saveNaryads(true).catch(()=>{});
+  }
+
+  function removeAddrFromOrder(orderId, addrId){
+    const order=state.orders.find(x=>x.id===orderId); if(!order) return;
+    const idx=order.items.findIndex(x=>x.id===addrId);
+    if(idx!==-1){ order.items.splice(idx,1); }
+    state.addrToOrder.delete(addrId);
+    state.baseVisibleIds.add(addrId);
+    refreshOrderLayer(order); renderOrdersList(); renderOrderTable(order); applyBaseVisibility();
+  }
+
+  function selectAllBaseInViewIntoOrder(order){
+    const inView=[];
+    state.db.items.forEach(it=>{
+      if(!Array.isArray(it.polygon)||it.polygon.length<3) return;
+      const layer=ensureBaseLayer(it); if(!layer) return;
+      if(map.getBounds().intersects(layer.getBounds())) inView.push(it.id);
+    });
+    inView.forEach(id=>{
+      if(!state.addrToOrder.has(id)){
+        order.items.push({id, qty:0});
+        state.addrToOrder.set(id, order.id);
+        state.baseVisibleIds.delete(id);
+      }
+    });
+    refreshOrderLayer(order); renderOrdersList(); renderOrderTable(order); applyBaseVisibility(); saveNaryads(true).catch(()=>{});
+  }
+
+  // Создание пустого наряда вручную
+  if(btnOrderAdd){
+    btnOrderAdd.onclick = ()=>{
+      const willOpen = !(orderCreateSection && orderCreateSection.classList.contains('open'));
+      setOrderCreateOpen(willOpen);
+      if(willOpen){
+        const manualBtn = $('btnAddManual');
+        if(manualBtn){
+          manualBtn.focus();
+        }
+      }
+    };
+  }
+
+  $('btnAddManual').onclick = ()=>{
+    const order={ id:uid(), code:makeOrderCode(), company:'Новый заказчик', color: normalizeHexColor(DEFAULT_ORDER_COLOR, DEFAULT_ORDER_COLOR), items:[], created_at:new Date().toISOString() };
+    state.orders.push(order);
+    refreshOrderLayer(order); renderOrdersList(); openOrderEditor(order.id); saveNaryads(true).catch(()=>{});
+  };
+
+  if(btnOrdersShowAll){
+    btnOrdersShowAll.onclick = ()=>{
+      state.orders.forEach(order=>{
+        const group = ensureOrderLayer(order);
+        if(group && !group.getLayers().length){ refreshOrderLayer(order); }
+        if(group && !map.hasLayer(group)){ group.addTo(map); }
+      });
+      renderOrdersList();
+    };
+  }
+
+  if(btnOrdersHideAll){
+    btnOrdersHideAll.onclick = ()=>{
+      state.orders.forEach(order=>{
+        const group = state.orderLayers.get(order.id);
+        if(group && map.hasLayer(group)){ map.removeLayer(group); }
+      });
+      renderOrdersList();
+    };
+  }
+
+  if(btnOrdersScreenshot){
+    btnOrdersScreenshot.onclick = ()=>{
+      captureActiveOrdersScreenshot().catch(err=>{
+        console.error(err);
+        alert(err?.message || 'Не удалось сформировать скрин.');
+      });
+    };
+  }
+
+  updateOrdersMapButtons();
+
+  function deleteOrder(orderId){
+    const order=state.orders.find(x=>x.id===orderId); if(!order) return;
+    if(!confirm(`Удалить наряд ${order.code} (${order.company})?`)) return;
+    order.items.forEach(it=>{ state.addrToOrder.delete(it.id); state.baseVisibleIds.add(it.id); });
+    const g=state.orderLayers.get(orderId); if(g) map.removeLayer(g);
+    state.orderLayers.delete(orderId);
+    state.orders = state.orders.filter(x=>x.id!==orderId);
+    if(state.activeOrderId===orderId){ state.activeOrderId=null; $('orderEditPanel').style.display='none'; }
+    renderOrdersList(); applyBaseVisibility(); saveNaryads(true).catch(()=>{});
+  }
+
+  // Печать + экспорт XLSX
+  const btnPrint = $('btnPrint');
+  if(btnPrint){
+    btnPrint.onclick = ()=>{
+      const orderId = state.activeOrderId || (state.orders[0]?.id);
+      if(!orderId) return window.print();
+      const order = state.orders.find(x=>x.id===orderId); if(!order) return;
+      const g=ensureOrderLayer(order);
+      if(g && g.getLayers().length){ map.fitBounds(g.getBounds().pad(0.1)); }
+      const rows = order.items.map(it=>{
+        const base=state.db.items.find(x=>x.id===it.id);
+        return { 'Компания': order.company, 'Цвет': order.color, 'Адрес': base? base.title : it.id, 'Кол': Number(it.qty)||0, 'Код карты': order.code, 'Код наряда': order.code };
+      });
+      const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Печать ${esc(order.code)}</title><style>body{font-family:system-ui,Segoe UI,Roboto,Arial;padding:16px;}h1{margin:0 0 12px;}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ddd;padding:6px 8px;text-align:left;font-size:12px}</style></head><body><h1>Наряд ${esc(order.code)} — ${esc(order.company)} <span style="color:${order.color}">●</span></h1><p>Дата: ${new Date(order.created_at).toLocaleString()}</p><table><thead><tr><th>#</th><th>Компания</th><th>Цвет</th><th>Адрес</th><th>Кол</th><th>Код наряда</th></tr></thead><tbody>${rows.map((r,i)=>`<tr><td>${i+1}</td><td>${esc(r['Компания'])}</td><td><span style="color:${r['Цвет']}">●</span> ${esc(r['Цвет'])}</td><td>${esc(r['Адрес'])}</td><td>${r['Кол']}</td><td>${esc(r['Код наряда'])}</td></tr>`).join('')}</tbody></table><script>window.onload=()=>window.print();<\/script></body></html>`;
+      const w=window.open('about:blank','_blank'); w.document.write(html); w.document.close();
+    };
+  }
+  function hexToXlsxRgb(hex){
+    if(typeof hex !== 'string') return null;
+    let clean = hex.trim();
+    if(!clean) return null;
+    if(clean.startsWith('#')) clean = clean.slice(1);
+    if(clean.length === 3){
+      if(/[^0-9a-f]/i.test(clean)) return null;
+      clean = clean.split('').map(ch=> ch+ch).join('');
+    }
+    if(clean.length !== 6 || /[^0-9a-f]/i.test(clean)) return null;
+    return 'FF' + clean.toUpperCase();
+  }
+
+  async function exportOrderXlsx(order){
+    if(!window.ExcelJS || !window.ExcelJS.Workbook){
+      throw new Error('ExcelJS не загружен, не удалось сформировать XLSX.');
+    }
+    const rows = order.items.map(it=>{
+      const base = state.db.items.find(x=>x.id===it.id);
+      if(!base) return null;
+      const addr = extractOrderAddress(base);
+      const parts = splitAddressParts(base);
+      return { addr, qty: Number(it.qty)||0, fallback: base.title, parts };
+    }).filter(Boolean);
+    const maxEntrances = rows.reduce((m,r)=> Math.max(m, r.qty), 0);
+    const header = ['Город','Улица','Дом','Цвет','Компания','Кол'];
+    for(let i=1;i<=maxEntrances;i++) header.push(String(i));
+    const totalCols = header.length;
+    const colorHex = normalizeHexColor(order.color, DEFAULT_ORDER_COLOR);
+    const colorFill = hexToXlsxRgb(colorHex);
+
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Наряд', {
+      views:[{ state:'frozen', ySplit:3 }]
+    });
+
+    sheet.mergeCells(1,1,1,totalCols);
+    const orderCell = sheet.getCell(1,1);
+    orderCell.value = `Код наряда: ${order.code}`;
+    orderCell.font = { bold:true, size:14 };
+
+    sheet.mergeCells(2,1,2,totalCols);
+    const companyCell = sheet.getCell(2,1);
+    companyCell.value = `Компания: ${order.company}`;
+    companyCell.font = { bold:true, size:14 };
+
+    const headerRow = sheet.addRow(header);
+    headerRow.font = { bold:true };
+    headerRow.alignment = { horizontal:'center', vertical:'middle' };
+    headerRow.eachCell(cell=>{
+      cell.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FFECECEC' } };
+    });
+
+    rows.forEach(r=>{
+      const city = r.addr.city || '';
+      let street = (r.addr.street || '').trim();
+      if(!street){
+        street = (r.parts?.street || '').trim();
+      }
+      if(!street){
+        const fallbackParts = splitAddressParts({ title:r.fallback, city });
+        street = (fallbackParts.street || '').trim();
+      }
+      if(!street && r.fallback){
+        street = String(r.fallback).trim();
+      }
+      street = stripCityPrefix(street, city);
+      const line = [
+        city,
+        street || '',
+        r.addr.house || '',
+        ' ',
+        order.company,
+        r.qty
+      ];
+      for(let i=1;i<=maxEntrances;i++) line.push('');
+      const row = sheet.addRow(line);
+      const colorCell = row.getCell(4);
+      colorCell.value = ' ';
+      colorCell.alignment = { horizontal:'center', vertical:'middle' };
+      if(colorFill){
+        colorCell.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:colorFill } };
+      }
+    });
+
+    const columnWidths = [16,28,12,10,24,6];
+    for(let i=0;i<maxEntrances;i++) columnWidths.push(4);
+    sheet.columns = columnWidths.map(width=>({ width }));
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `naryad_${order.code}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(()=>{
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 0);
+  }
+  function waitForTileLayerReady(tileLayer, timeout = 8000){
+    return new Promise(resolve=>{
+      if(!tileLayer || !tileLayer._tiles){
+        resolve();
+        return;
+      }
+      const finalize = ()=>{
+        tileLayer.off('load', handleChange);
+        tileLayer.off('tileerror', handleChange);
+        clearTimeout(timer);
+        resolve();
+      };
+      const checkReady = ()=>{
+        const tiles = tileLayer._tiles;
+        if(!tiles){
+          finalize();
+          return;
+        }
+        const keys = Object.keys(tiles);
+        if(!keys.length){
+          return;
+        }
+        const allReady = keys.every(key=>{
+          const tile = tiles[key];
+          return tile && tile.loaded;
+        });
+        if(allReady){
+          finalize();
+        }
+      };
+      const handleChange = ()=>{
+        checkReady();
+      };
+      const timer = setTimeout(()=>{
+        finalize();
+      }, timeout);
+      tileLayer.on('load', handleChange);
+      tileLayer.on('tileerror', handleChange);
+      checkReady();
+    });
+  }
+
+  function drawRoundedRect(ctx, x, y, w, h, r){
+    const radius = Math.max(0, Math.min(r, Math.min(w, h) / 2));
+    ctx.beginPath();
+    ctx.moveTo(x + radius, y);
+    ctx.lineTo(x + w - radius, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
+    ctx.lineTo(x + w, y + h - radius);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
+    ctx.lineTo(x + radius, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - radius);
+    ctx.lineTo(x, y + radius);
+    ctx.quadraticCurveTo(x, y, x + radius, y);
+    ctx.closePath();
+  }
+
+  function polygonCentroid(points){
+    if(!Array.isArray(points) || points.length === 0) return null;
+    let twiceArea = 0;
+    let cx = 0;
+    let cy = 0;
+    for(let i = 0; i < points.length; i++){
+      const p1 = points[i];
+      const p2 = points[(i + 1) % points.length];
+      const f = p1.x * p2.y - p2.x * p1.y;
+      twiceArea += f;
+      cx += (p1.x + p2.x) * f;
+      cy += (p1.y + p2.y) * f;
+    }
+    if(Math.abs(twiceArea) < 1e-6){
+      const sum = points.reduce((acc, p)=>({ x: acc.x + p.x, y: acc.y + p.y }), { x: 0, y: 0 });
+      const len = points.length || 1;
+      return { x: sum.x / len, y: sum.y / len };
+    }
+    const area = twiceArea / 2;
+    return { x: cx / (6 * area), y: cy / (6 * area) };
+  }
+
+  function drawHouseLabelOnCanvas(ctx, x, y, text, color, scale){
+    const value = String(text || '').trim();
+    if(!value) return;
+    const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
+    const fontSize = Math.max(12, Math.round(11 * safeScale));
+    ctx.save();
+    ctx.font = `700 ${fontSize}px "Segoe UI", "Helvetica Neue", Arial, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const metrics = ctx.measureText(value);
+    const padX = Math.max(6, Math.round(fontSize * 0.6));
+    const padY = Math.max(4, Math.round(fontSize * 0.45));
+    const width = metrics.width + padX * 2;
+    const height = fontSize + padY * 2;
+    const radius = Math.min(height / 2, Math.round(fontSize * 0.7));
+    drawRoundedRect(ctx, x - width / 2, y - height / 2, width, height, radius);
+    ctx.fillStyle = 'rgba(255,255,255,0.96)';
+    ctx.lineWidth = Math.max(1.5, Math.round(safeScale * 2));
+    ctx.strokeStyle = color;
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = color;
+    ctx.fillText(value, x, y);
+    ctx.restore();
+  }
+
+  function drawOrdersOnCanvas(canvas, orders){
+    if(!canvas || !Array.isArray(orders) || !orders.length) return;
+    const ctx = canvas.getContext('2d');
+    if(!ctx) return;
+    const size = map.getSize();
+    if(!size || !size.x || !size.y) return;
+    const scaleX = canvas.width / size.x;
+    const scaleY = canvas.height / size.y;
+    if(!isFinite(scaleX) || !isFinite(scaleY)) return;
+    const scale = (scaleX + scaleY) / 2;
+    const baseIndex = new Map();
+    state.db.items.forEach(item=>{ baseIndex.set(item.id, item); });
+    orders.forEach(order=>{
+      const color = normalizeHexColor(order.color, DEFAULT_ORDER_COLOR);
+      const fillStyle = hexToRgba(color, 0.5);
+      const strokeStyle = color;
+      order.items.forEach(({ id })=>{
+        const base = baseIndex.get(id);
+        if(!base || !Array.isArray(base.polygon) || base.polygon.length < 3) return;
+        const latlngs = ringLonLat_to_LatLng(base.polygon);
+        const points = [];
+        latlngs.forEach(ll=>{
+          const pt = map.latLngToContainerPoint(ll);
+          const scaled = { x: pt.x * scaleX, y: pt.y * scaleY };
+          const prev = points[points.length - 1];
+          if(!prev || prev.x !== scaled.x || prev.y !== scaled.y){
+            points.push(scaled);
+          }
+        });
+        if(points.length < 3) return;
+        ctx.save();
+        ctx.beginPath();
+        points.forEach((pt, idx)=>{ idx ? ctx.lineTo(pt.x, pt.y) : ctx.moveTo(pt.x, pt.y); });
+        ctx.closePath();
+        ctx.fillStyle = fillStyle;
+        ctx.strokeStyle = strokeStyle;
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
+        ctx.lineWidth = Math.max(2, Math.round(scale * 2));
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+        const centroid = polygonCentroid(points);
+        if(centroid){
+          drawHouseLabelOnCanvas(ctx, centroid.x, centroid.y, extractHouse(base.title), strokeStyle, scale);
+        }
+      });
+    });
+  }
+
+  function detachVisibleOrderLayers(){
+    const removed = [];
+    state.orderLayers.forEach(group=>{
+      if(map.hasLayer(group)){
+        map.removeLayer(group);
+        removed.push(group);
+      }
+    });
+    return ()=>{
+      removed.forEach(group=>{
+        if(!map.hasLayer(group)) group.addTo(map);
+      });
+    };
+  }
+
+  function waitForNextFrame(){
+    return new Promise(resolve=> requestAnimationFrame(()=> requestAnimationFrame(resolve)));
+  }
+
+  async function captureActiveOrdersScreenshot(){
+    if(typeof window.html2canvas !== 'function'){
+      throw new Error('html2canvas недоступен');
+    }
+    const activeOrders = state.orders.filter(order=>{
+      const group = state.orderLayers.get(order.id);
+      return Array.isArray(order.items) && order.items.length && group && map.hasLayer(group);
+    });
+    if(!activeOrders.length){
+      throw new Error('Нет активных нарядов на карте.');
+    }
+
+    await waitForTileLayerReady(baseTileLayer);
+
+    const restoreOrders = detachVisibleOrderLayers();
+    await waitForNextFrame();
+    let mapCanvas;
+    try{
+      mapCanvas = await window.html2canvas(map.getContainer(), {
+        useCORS:true,
+        backgroundColor:'#ffffff',
+        scale:2
+      });
+    }finally{
+      restoreOrders();
+    }
+
+    if(!mapCanvas){
+      throw new Error('Не удалось создать изображение карты.');
+    }
+
+    drawOrdersOnCanvas(mapCanvas, activeOrders);
+
+    const now = new Date();
+    const headerText = `Активные наряды (${activeOrders.length})`;
+    const infoText = `Снимок: ${now.toLocaleString('ru-RU')}`;
+
+    const baseWidth = mapCanvas.width;
+    const paddingX = Math.max(40, Math.round(baseWidth * 0.04));
+    const paddingY = Math.max(30, Math.round(baseWidth * 0.03));
+    const headerFontSize = Math.max(28, Math.round(baseWidth * 0.03));
+    const infoFontSize = Math.max(20, Math.round(baseWidth * 0.02));
+    const lineFontSize = Math.max(22, Math.round(baseWidth * 0.022));
+    const headerGap = Math.round(headerFontSize * 0.4);
+    const infoGap = Math.round(infoFontSize * 0.5);
+    const lineGap = Math.round(lineFontSize * 0.45);
+    const lineHeight = lineFontSize + lineGap;
+    const captionHeight = paddingY * 2 + headerFontSize + headerGap + infoFontSize + infoGap + (activeOrders.length * lineHeight);
+    const colorBoxSize = Math.round(lineFontSize * 0.9);
+    const colorBoxGap = Math.round(lineFontSize * 0.6);
+
+    const finalCanvas = document.createElement('canvas');
+    finalCanvas.width = mapCanvas.width;
+    finalCanvas.height = mapCanvas.height + captionHeight;
+    const ctx = finalCanvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, finalCanvas.width, finalCanvas.height);
+    ctx.drawImage(mapCanvas, 0, 0);
+
+    const captionTop = mapCanvas.height;
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillRect(0, captionTop, finalCanvas.width, captionHeight);
+
+    ctx.textBaseline = 'alphabetic';
+    let cursorY = captionTop + paddingY;
+
+    ctx.fillStyle = '#0f172a';
+    ctx.font = `600 ${headerFontSize}px "Segoe UI", "Helvetica Neue", Arial, sans-serif`;
+    cursorY += headerFontSize;
+    ctx.fillText(headerText, paddingX, cursorY);
+    cursorY += headerGap;
+
+    ctx.fillStyle = '#475569';
+    ctx.font = `400 ${infoFontSize}px "Segoe UI", "Helvetica Neue", Arial, sans-serif`;
+    cursorY += infoFontSize;
+    ctx.fillText(infoText, paddingX, cursorY);
+    cursorY += infoGap;
+
+    ctx.font = `400 ${lineFontSize}px "Segoe UI", "Helvetica Neue", Arial, sans-serif`;
+    activeOrders.forEach(order=>{
+      const colorHex = normalizeHexColor(order.color, DEFAULT_ORDER_COLOR);
+      cursorY += lineHeight;
+      const boxY = cursorY - lineFontSize + Math.round((lineFontSize - colorBoxSize) / 2);
+      ctx.fillStyle = colorHex;
+      ctx.fillRect(paddingX, boxY, colorBoxSize, colorBoxSize);
+      ctx.strokeStyle = 'rgba(15,23,42,0.12)';
+      ctx.lineWidth = Math.max(2, Math.round(colorBoxSize * 0.12));
+      ctx.strokeRect(paddingX, boxY, colorBoxSize, colorBoxSize);
+      ctx.fillStyle = '#0f172a';
+      const text = `${order.code} — ${order.company} (адресов: ${order.items.length})`;
+      ctx.fillText(text, paddingX + colorBoxSize + colorBoxGap, cursorY);
+    });
+
+    await new Promise((resolve, reject)=>{
+      finalCanvas.toBlob(blob=>{
+        if(!blob){
+          reject(new Error('Не удалось сформировать изображение.'));
+          return;
+        }
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const iso = now.toISOString().replace(/[:.]/g, '-');
+        a.download = `orders_active_${iso}.png`;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(()=>{
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          resolve();
+        }, 0);
+      }, 'image/png');
+    });
+  }
+
+  async function captureOrderMap(order){
+    const group = ensureOrderLayer(order);
+    const wasVisible = map.hasLayer(group);
+    if(!wasVisible){ group.addTo(map); }
+    if(!group || !group.getLayers().length){
+      refreshOrderLayer(order);
+    }
+    if(!group || !group.getLayers().length){
+      throw new Error('Нет домов для карты');
+    }
+    const bounds = group.getBounds();
+    if(!bounds || !bounds.isValid()){
+      throw new Error('Нет валидных границ наряда');
+    }
+    const prevCenter = map.getCenter();
+    const prevZoom = map.getZoom();
+    await new Promise(resolve=>{
+      const finish = ()=>{ map.off('moveend', finish); setTimeout(resolve, 400); };
+      map.once('moveend', finish);
+      map.fitBounds(bounds.pad(0.2));
+    });
+    addBaseLabelsIfZoom();
+    await new Promise(r=> setTimeout(r, 400));
+    if(typeof window.html2canvas !== 'function'){
+      throw new Error('html2canvas недоступен');
+    }
+    await waitForTileLayerReady(baseTileLayer);
+
+    const restoreOrders = detachVisibleOrderLayers();
+    await waitForNextFrame();
+    let canvas;
+    try{
+      canvas = await window.html2canvas(map.getContainer(), {
+        useCORS:true,
+        backgroundColor:'#ffffff',
+        scale:2
+      });
+    }finally{
+      restoreOrders();
+    }
+
+    if(!canvas){
+      throw new Error('Не удалось создать изображение карты.');
+    }
+
+    drawOrdersOnCanvas(canvas, [order]);
+
+    await new Promise((resolve, reject)=>{
+      canvas.toBlob(blob=>{
+        if(!blob){ reject(new Error('Не удалось сформировать изображение карты')); return; }
+        const url = URL.createObjectURL(blob);
+        const a=document.createElement('a');
+        a.href = url;
+        a.download = `naryad_${order.code}_map.png`;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(()=>{
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          resolve();
+        }, 0);
+      }, 'image/png');
+    });
+    map.setView(prevCenter, prevZoom, { animate:false });
+    setTimeout(()=> addBaseLabelsIfZoom(), 100);
+    if(!wasVisible){ map.removeLayer(group); }
+  }
+
+  async function generateOrderPackage(order){
+    if(!order.items.length){
+      alert('Добавьте в наряд хотя бы один адрес.');
+      return;
+    }
+    try{
+      await exportOrderXlsx(order);
+    }catch(err){
+      console.error(err);
+      alert(err?.message || 'Не удалось сформировать таблицу наряда.');
+      return;
+    }
+    try{
+      await captureOrderMap(order);
+    }catch(err){
+      console.error(err);
+      alert(err.message||'Не удалось сформировать карту.');
+    }
+  }
+
+  // Сохранение/загрузка naryad.json
+  const btnSaveNaryad = $('btnSaveNaryad');
+  if(btnSaveNaryad){
+    btnSaveNaryad.onclick = async ()=>{
+      try{
+        if(!state.ghNrd && !state.naryadFsHandle && window.showSaveFilePicker){
+          const handle = await pickNaryadHandleForSave();
+          if(!handle) return;
+        }
+        await saveNaryads();
+        if(state.activeOrderId){
+          state.activeOrderId = null;
+          const panel = $('orderEditPanel');
+          if(panel){ panel.style.display = 'none'; }
+          renderOrdersList();
+        }
+      }catch(err){
+        alert('Ошибка сохранения: '+(err?.message || err));
+      }
+    };
+  }
+  const btnLoadNaryad = $('btnLoadNaryad');
+  if(btnLoadNaryad){
+    btnLoadNaryad.onclick = async ()=>{
+      const handled = await tryLoadNaryadViaPicker();
+      if(!handled && naryadLoad) naryadLoad.click();
+    };
+  }
+  if(naryadLoad){
+    naryadLoad.addEventListener('change', async (e)=>{
+      const f=e.target.files?.[0]; if(!f) return;
+      const txt=await f.text();
+      try{
+        const j=JSON.parse(txt);
+        state.naryadFsHandle = null;
+        loadNaryadsFromObject(j);
+        alert('Наряды загружены.');
+      }catch(err){ alert('Ошибка JSON: '+err.message); }
+    });
+  }
+
+  function getNaryadsObject(){ return { version:1, updated_at: new Date().toISOString(), orders: state.orders }; }
+  function loadNaryadsFromObject(obj){
+    state.orders = Array.isArray(obj.orders)? obj.orders : [];
+    state.addrToOrder.clear();
+    state.orders.forEach(o=>{
+      o.color = normalizeHexColor(o.color, DEFAULT_ORDER_COLOR);
+      if(!Array.isArray(o.items)) o.items = [];
+      o.items.forEach(it=> state.addrToOrder.set(it.id, o.id));
+    });
+    state.orderLayers.forEach(g=> map.removeLayer(g)); state.orderLayers.clear();
+    state.orders.forEach(o=> refreshOrderLayer(o));
+    renderOrdersList(); applyBaseVisibility();
+    try{ localStorage.setItem('naryad.json', JSON.stringify(getNaryadsObject())); }catch(_){}
+  }
+  async function pickNaryadHandleForSave(){
+    if(!window.showSaveFilePicker) return null;
+    try{
+      const handle = await window.showSaveFilePicker({
+        suggestedName: 'naryad.json',
+        types: [{ description:'JSON', accept:{ 'application/json':['.json'] } }]
+      });
+      state.naryadFsHandle = handle;
+      return handle;
+    }catch(err){
+      if(err?.name !== 'AbortError') console.warn('showSaveFilePicker error', err);
+      return null;
+    }
+  }
+  async function tryLoadNaryadViaPicker(){
+    if(!window.showOpenFilePicker) return false;
+    try{
+      const [handle] = await window.showOpenFilePicker({
+        multiple:false,
+        types:[{ description:'JSON', accept:{ 'application/json':['.json'] } }]
+      });
+      if(!handle) return true;
+      const file = await handle.getFile();
+      const txt = await file.text();
+      const data = JSON.parse(txt);
+      state.naryadFsHandle = handle;
+      loadNaryadsFromObject(data);
+      alert('Наряды загружены из файла.');
+      return true;
+    }catch(err){
+      if(err?.name === 'AbortError') return true;
+      alert('Ошибка чтения файла: '+(err?.message || err));
+      return true;
+    }
+  }
+  async function writeNaryadToHandle(content, silent){
+    const handle = state.naryadFsHandle;
+    if(!handle || typeof handle.createWritable !== 'function') return false;
+    try{
+      let perm = 'granted';
+      if(typeof handle.queryPermission === 'function'){
+        perm = await handle.queryPermission({mode:'readwrite'});
+        if(perm === 'prompt' && typeof handle.requestPermission === 'function'){
+          perm = await handle.requestPermission({mode:'readwrite'});
+        }
+        if(perm !== 'granted') throw new Error('Доступ к файлу отклонён.');
+      }
+      const writable = await handle.createWritable();
+      await writable.write(content);
+      await writable.close();
+      if(!silent) alert('Сохранено в выбранный naryad.json.');
+      return true;
+    }catch(err){
+      console.warn('FileSystem save failed', err);
+      if(!silent) alert('Не удалось сохранить в выбранный naryad.json: '+(err?.message || err));
+      state.naryadFsHandle = null;
+      return false;
+    }
+  }
+  async function saveNaryads(silent=false){
+    const content = JSON.stringify(getNaryadsObject(), null, 2);
+    try{ localStorage.setItem('naryad.json', content); }catch(_){}
+    if(state.ghNrd && state.ghNrd.token){
+      let sha = await ghGetSha(state.ghNrd);
+      try{
+        const res = await ghPut(state.ghNrd, content, sha || undefined);
+        if(!silent) alert(`Сохранено в GitHub: ${res.commit?.sha?.slice(0,7)}`);
+        return;
+      }catch(e){
+        if(e?._status === 409){
+          sha = await ghGetSha(state.ghNrd);
+          const res = await ghPut(state.ghNrd, content, sha || undefined);
+          if(!silent) alert(`Сохранено (обновлён sha): ${res.commit?.sha?.slice(0,7)}`);
+          return;
+        }
+        throw e;
+      }
+    }
+    if(await writeNaryadToHandle(content, silent)) return;
+    if(silent) return;
+    // локально
+    const blob = new Blob([content], {type:'application/json;charset=utf-8'});
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'naryad.json'; a.click(); URL.revokeObjectURL(a.href);
+    alert('Скачан naryad.json — замени его в репозитории.');
+  }
+
+  // Кнопки «Вид»
+  const btnShowAll = $('btnShowAll');
+  if(btnShowAll){ btnShowAll.onclick = ()=>{ state.baseVisibleIds = new Set(state.db.items.map(x=>x.id)); applyBaseVisibility(); renderBaseList(); }; }
+  const btnHideAll = $('btnHideAll');
+  if(btnHideAll){ btnHideAll.onclick = ()=>{ state.baseVisibleIds.clear(); applyBaseVisibility(); renderBaseList(); }; }
+  const btnFit = $('btnFit');
+  if(btnFit){ btnFit.onclick = ()=> fitAllVisible(); }
+
+  // Прямоугольное выделение (Shift + drag)
+  map.getContainer().addEventListener('mousedown',(e)=>{
+    if(!state.activeOrderId) return;
+    if(!e.shiftKey) return;
+    state.dragStart = map.mouseEventToLatLng(e);
+    state.dragRect = L.rectangle([state.dragStart, state.dragStart], {color:'#111', weight:1, fillColor:'#111', fillOpacity:0.05}).addTo(map);
+    document.body.style.cursor='crosshair';
+  });
+  map.getContainer().addEventListener('mousemove',(e)=>{
+    if(!state.dragRect||!state.dragStart) return;
+    const cur = map.mouseEventToLatLng(e);
+    state.dragRect.setBounds(L.latLngBounds(state.dragStart, cur));
+  });
+  map.getContainer().addEventListener('mouseup',()=>{
+    if(!state.dragRect) return;
+    const b=state.dragRect.getBounds();
+    map.removeLayer(state.dragRect); state.dragRect=null; state.dragStart=null; document.body.style.cursor='';
+    const order = state.orders.find(x=>x.id===state.activeOrderId); if(!order) return;
+    state.db.items.forEach(it=>{
+      const layer = ensureBaseLayer(it); if(!layer) return;
+      if(b.intersects(layer.getBounds())){
+        if(!state.addrToOrder.has(it.id)){
+          order.items.push({id:it.id, qty:0}); state.addrToOrder.set(it.id, order.id); state.baseVisibleIds.delete(it.id);
+        }
+      }
+    });
+    refreshOrderLayer(order); renderOrdersList(); renderOrderTable(order); applyBaseVisibility(); saveNaryads(true).catch(()=>{});
+  });
+
+  // Загрузка без кэша
+  function normalizeNaryad(j){ return { version: j.version||1, updated_at: j.updated_at || new Date().toISOString(), orders: Array.isArray(j.orders)? j.orders : [] }; }
+  async function loadJsonNoCache(url, token, {forceAuth=false}={}){
+    const bust = url + (url.includes('?') ? '&' : '?') + 'v=' + Date.now();
+    const headers = { 'Accept':'application/json' };
+    if(token){
+      let attach = forceAuth;
+      if(!attach){
+        try{
+          const { hostname } = new URL(url);
+          attach = hostname !== 'raw.githubusercontent.com';
+        }catch(_){ attach = true; }
+      }
+      if(attach){ headers['Authorization'] = `token ${token}`; }
+    }
+    const r = await fetch(bust, { cache:'no-store', headers });
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    return await r.json();
+  }
+
+  // Boot
+  (async function boot(){
+    // GitHub параметры: #ghdb=OWNER/REPO@branch:path/to/database.json&ghnrd=OWNER/REPO@branch:path/to/naryad.json&token=ghp_xxx
+    // (поддерживается сокращение #gh=... для базы и #naryad=... для нарядов)
+    state.ghDb  = parseGhFromHashKey('ghdb',  'database.json', ['gh']);
+    state.ghDbSpecs = buildGhDbSpecList(state.ghDb);
+    if(state.ghDbSpecs.length){
+      state.ghDb = state.ghDbSpecs[0];
+    }else{
+      state.ghDb = null;
+    }
+    state.ghNrd = parseGhFromHashKey('ghnrd', 'naryad.json', ['ghnaryad','naryad']);
+    if(!state.ghNrd && state.ghDb){
+      const basePath = state.ghDb.path.split('/'); basePath[basePath.length-1] = 'naryad.json';
+      state.ghNrd = { ...state.ghDb, path: basePath.join('/') };
+    }
+
+    updateLoadMessage();
+
+    try{
+      const dbPromise = state.ghDbSpecs.length
+        ? loadGitHubDatabases(state.ghDbSpecs)
+        : loadLocalDatabases();
+
+      const nrdPromise = state.ghNrd
+        ? ghLoadWithRawFallback(state.ghNrd, {missingValue:{orders: []}})
+        : loadJsonNoCache(new URL('naryad.json', location.href).toString()).catch(_=> ({orders: []}));
+
+      const [db, nrd] = await Promise.all([
+        dbPromise.catch(e=>{ throw new Error('База: '+(e?.message || e)); }),
+        nrdPromise.catch(e=>{ if(/404/.test(e.message||'')) return {orders: []}; throw e; })
+      ]);
+      state.db = normalizeDb(db);
+      refreshDbSourceStats();
+      state.baseVisibleIds = new Set(state.db.items.map(x=>x.id));
+      const N = normalizeNaryad(nrd);
+      state.orders = N.orders;
+      state.addrToOrder.clear();
+      state.orders.forEach(o=> o.items.forEach(it=> state.addrToOrder.set(it.id, o.id)) );
+      state.orders.forEach(o=> refreshOrderLayer(o));
+      updateLoadMessage();
+      renderCityChips(); renderBaseList(); applyBaseVisibility(); renderOrdersList();
+      updateBasePanelUI(); updateBaseMapButtons();
+      localStorage.setItem('naryad.json', JSON.stringify(getNaryadsObject()));
+    }catch(e){
+      $('loadMsg').textContent = 'Ошибка загрузки: '+e.message;
+      console.warn(e);
+      updateBasePanelUI(); updateBaseMapButtons();
+    }
+  })();
+
+  function downloadJsonFile(fileName, content){
+    const blob = new Blob([content], {type:'application/json;charset=utf-8'});
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = fileName;
+    link.click();
+    setTimeout(()=> URL.revokeObjectURL(link.href), 0);
+  }
+
+  async function saveDb(){
+    const updatedAt = new Date().toISOString();
+    const version = state.db.version || 1;
+    state.db.updated_at = updatedAt;
+    const normalizedItems = state.db.items.map(it=>({
+      id: it.id,
+      title: it.title || '',
+      city: it.city || '',
+      polygon: Array.isArray(it.polygon) ? it.polygon : null
+    }));
+    refreshDbSourceStats();
+    const basePayload = { version, updated_at: updatedAt, items: normalizedItems };
+
+    const hasGhToken = Boolean(state.ghDb && state.ghDb.token);
+    const ghSpecsList = hasGhToken
+      ? (Array.isArray(state.ghDbSpecs) && state.ghDbSpecs.length ? state.ghDbSpecs : (state.ghDb ? [state.ghDb] : []))
+      : [];
+
+    if(hasGhToken && ghSpecsList.length === 1){
+      const targetSpec = { ...ghSpecsList[0], token: ghSpecsList[0].token || state.ghDb.token };
+      const content = JSON.stringify(basePayload, null, 2);
+      let sha = await ghGetSha(targetSpec);
+      try{
+        const res = await ghPut(targetSpec, content, sha || undefined);
+        return `Коммит ${res.commit?.sha?.slice(0,7)} в ${targetSpec.repo}/${targetSpec.branch}`;
+      }catch(e){
+        if(e?._status===409){
+          sha = await ghGetSha(targetSpec);
+          const res = await ghPut(targetSpec, content, sha || undefined);
+          return `Коммит ${res.commit?.sha?.slice(0,7)} (sha обновлён)`;
+        }
+        throw e;
+      }
+    }
+
+    const sources = state.dbSources.slice();
+    const fallbackSource = sources[0] || null;
+    const fallbackKey = fallbackSource ? fallbackSource.key : null;
+
+    const grouped = new Map();
+    normalizedItems.forEach(item=>{
+      let key = state.dbSourceById.get(item.id) || fallbackKey;
+      if(key && !state.dbSourceIndex.has(key) && fallbackKey){
+        key = fallbackKey;
+        state.dbSourceById.set(item.id, key);
+      }
+      if(!key && fallbackKey){
+        key = fallbackKey;
+        state.dbSourceById.set(item.id, key);
+      }
+      if(!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key).push(item);
+    });
+
+    const makeFileName = (source, key)=>{
+      if(source){
+        return getDbSourceFileName(source);
+      }
+      if(key == null){
+        return 'database.json';
+      }
+      const safeKey = String(key || 'extra').replace(/[^0-9a-zA-Zа-яА-Я_\-]+/g,'_');
+      return `database-${safeKey}.json`;
+    };
+
+    if(hasGhToken && ghSpecsList.length > 1){
+      const formatSpecLabel = (spec)=>{
+        const repo = spec.repo || '';
+        const branch = spec.branch || '';
+        const path = spec.path || '';
+        if(repo && branch){
+          return `${repo}@${branch}:${path}`;
+        }
+        if(repo){
+          return `${repo}:${path}`;
+        }
+        return path || 'database.json';
+      };
+      const ghResults = [];
+      const handledKeys = new Set();
+      for(const source of sources){
+        const baseSpec = source?.spec;
+        if(!baseSpec) continue;
+        const spec = { ...baseSpec, token: baseSpec.token || state.ghDb.token };
+        const key = source.key;
+        const items = grouped.get(key) || [];
+        const payload = { version, updated_at: updatedAt, items };
+        const content = JSON.stringify(payload, null, 2);
+        let sha = await ghGetSha(spec);
+        try{
+          const res = await ghPut(spec, content, sha || undefined);
+          handledKeys.add(key);
+          const label = formatSpecLabel(spec);
+          const shaText = res.commit?.sha?.slice(0,7);
+          ghResults.push(shaText ? `${label} (#${shaText})` : label);
+          continue;
+        }catch(err){
+          if(err?._status===409){
+            sha = await ghGetSha(spec);
+            const res = await ghPut(spec, content, sha || undefined);
+            handledKeys.add(key);
+            const label = formatSpecLabel(spec);
+            const shaText = res.commit?.sha?.slice(0,7);
+            ghResults.push(shaText ? `${label} (#${shaText}) (sha обновлён)` : `${label} (sha обновлён)`);
+            continue;
+          }
+          throw err;
+        }
+      }
+
+      const downloaded = [];
+      grouped.forEach((items, key)=>{
+        if(!items.length || handledKeys.has(key)) return;
+        const source = sources.find(s=> s.key===key) || fallbackSource;
+        const payload = { version, updated_at: updatedAt, items };
+        const fileName = makeFileName(source, key);
+        downloadJsonFile(fileName, JSON.stringify(payload, null, 2));
+        downloaded.push(fileName);
+      });
+
+      const summaryParts = [];
+      if(ghResults.length){
+        summaryParts.push(`GitHub обновлён: ${ghResults.join(', ')}`);
+      }
+      if(downloaded.length){
+        summaryParts.push(`Скачаны файлы: ${downloaded.join(', ')} — замените их в репозитории.`);
+      }
+      return summaryParts.join(' • ') || 'Сохранение завершено.';
+    }
+
+    if(sources.length <= 1){
+      const fileName = makeFileName(fallbackSource, fallbackKey);
+      const content = JSON.stringify(basePayload, null, 2);
+      downloadJsonFile(fileName, content);
+      return `Скачан обновлённый ${fileName} — замените его в репозитории.`;
+    }
+
+    const downloaded = [];
+    const accounted = new Set();
+    sources.forEach(source=>{
+      const key = source.key;
+      accounted.add(key);
+      const items = grouped.get(key) || [];
+      const payload = { version, updated_at: updatedAt, items };
+      const fileName = makeFileName(source, key);
+      downloadJsonFile(fileName, JSON.stringify(payload, null, 2));
+      downloaded.push(fileName);
+    });
+
+    grouped.forEach((items, key)=>{
+      if(accounted.has(key) || !items || !items.length) return;
+      const payload = { version, updated_at: updatedAt, items };
+      const fileName = makeFileName(null, key);
+      downloadJsonFile(fileName, JSON.stringify(payload, null, 2));
+      downloaded.push(fileName);
+    });
+
+    if(!downloaded.length && fallbackSource){
+      const fileName = makeFileName(fallbackSource, fallbackKey);
+      downloadJsonFile(fileName, JSON.stringify(basePayload, null, 2));
+      downloaded.push(fileName);
+    }
+
+    const summary = downloaded.length
+      ? `Скачаны обновлённые файлы: ${downloaded.join(', ')} — замените их в репозитории.`
+      : 'Скачан обновлённый database.json — замените его в репозитории.';
+    return summary;
+  }
+
+  // Подписи при движении/зуме
+  map.on('moveend zoomend', addBaseLabelsIfZoom);
+  updateBasePanelUI();
+  updateBaseMapButtons();
+  updateSidebarToggle();
+  renderQuickCityFilters();
+})(); // конец IIFE
+</script>
+</body>
+</html>
