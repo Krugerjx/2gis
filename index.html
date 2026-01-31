@@ -1508,9 +1508,18 @@
       .replace(/\s+/g,' ')
       .trim();
   }
+  function normalizeHouseValue(value){
+    return simpleNormalize(value).replace(/(\d)\s+([a-zа-я])/gi,'$1$2');
+  }
+  function normalizeCityValue(value){
+    return simpleNormalize(value)
+      .replace(/(^|\s)(?:г|город|гор)(?=\s|$)/g,'$1 ')
+      .replace(/\s+/g,' ')
+      .trim();
+  }
   function extractStreetHouse(s){
     if(!s) return {street:'',house:''};
-    const t = simpleNormalize(s);
+    const t = normalizeHouseValue(s);
     // улица + номер (допускаем буквы/дроби)
     const m = t.match(/(.+?)\s+(\d+[0-9а-яa-z\/\-]*)$/i);
     if(m) return {street:m[1].trim(), house:m[2].trim()};
@@ -1518,12 +1527,34 @@
     const m2 = t.match(/(.+?)\s+(\d+[а-я]?)/i);
     return { street: (m2?m2[1]:'').trim(), house: (m2?m2[2]:'').trim() };
   }
+  function extractCityStreetHouse(addrText){
+    const parts = splitAddressParts({ title: addrText, city: '' });
+    return {
+      city: (parts.city || '').trim(),
+      street: (parts.street || '').trim(),
+      house: (parts.house || '').trim()
+    };
+  }
+  function matchesHouseBoundary(baseText, houseValue){
+    if(!baseText || !houseValue) return false;
+    const h = normalizeHouseValue(houseValue);
+    if(!h) return false;
+    const escaped = escapeRegExp(h);
+    const re = new RegExp(`(^|\\s|,)${escaped}(?=$|\\s|,)`, 'i');
+    return re.test(baseText);
+  }
   function matchAddressToBase(addrText){
     const addrNorm = simpleNormalize(addrText||'');
     if(!addrNorm) return null;
 
+    const parts = extractCityStreetHouse(addrText);
+    const cityNorm = normalizeCityValue(parts.city);
+    const candidates = cityNorm
+      ? state.db.items.filter(it => normalizeCityValue(it.city || '') === cityNorm)
+      : state.db.items;
+
     // 0) быстрые точные проверки
-    for(const it of state.db.items){
+    for(const it of candidates){
       if(simpleNormalize(it.title) === addrNorm) return it.id;
       if(simpleNormalize(`${it.city||''} ${it.title||''}`) === addrNorm) return it.id;
     }
@@ -1531,22 +1562,34 @@
     // 1) улица/дом
     const {street,house} = extractStreetHouse(addrText);
     if(street && house){
-      for(const it of state.db.items){
+      const streetNorm = simpleNormalize(street);
+      const houseNorm = normalizeHouseValue(house);
+      for(const it of candidates){
         const baseNorm = simpleNormalize(`${it.city||''} ${it.title||''}`);
-        if(baseNorm.includes(street) && baseNorm.includes(house)) return it.id;
+        const baseAddr = extractOrderAddress(it);
+        const baseStreet = simpleNormalize(baseAddr.street || '');
+        const baseHouse = normalizeHouseValue(baseAddr.house || '');
+        if(baseStreet === streetNorm){
+          if(baseHouse === houseNorm) return it.id;
+          if(baseHouse && houseNorm && (baseHouse.startsWith(houseNorm) || houseNorm.startsWith(baseHouse))) return it.id;
+        }
+        if(baseNorm.includes(streetNorm) && matchesHouseBoundary(baseNorm, houseNorm)) return it.id;
       }
     }
 
     // 2) includes (обе стороны)
-    for(const it of state.db.items){
+    for(const it of candidates){
       const baseNorm = simpleNormalize(`${it.city||''} ${it.title||''}`);
       if(baseNorm.includes(addrNorm) || addrNorm.includes(baseNorm)) return it.id;
     }
 
     // 3) только улица
     if(street){
-      for(const it of state.db.items){
-        if(simpleNormalize(`${it.city||''} ${it.title||''}`).includes(street)) return it.id;
+      const streetNorm = simpleNormalize(street);
+      for(const it of candidates){
+        if(simpleNormalize(`${it.city||''} ${it.title||''}`).includes(streetNorm)) return it.id;
+        const baseAddr = extractOrderAddress(it);
+        if(simpleNormalize(baseAddr.street || '') === streetNorm) return it.id;
       }
     }
 
@@ -1554,7 +1597,7 @@
     if(house){
       const houseDigits = house.replace(/[^\d]/g,'');
       const streetFlat = (street||'').replace(/\s+/g,'');
-      for(const it of state.db.items){
+      for(const it of candidates){
         const b = simpleNormalize(`${it.city||''} ${it.title||''}`);
         const bDigits = b.replace(/[^\d]/g,'');
         if(bDigits.includes(houseDigits) && b.replace(/\s+/g,'').includes(streetFlat)) return it.id;
@@ -1785,7 +1828,7 @@
         const street = pickText(row, streetKey);
         if(street) parts.push(street);
         const houseParts = houseKeys.map(h=>pickText(row, h)).filter(Boolean);
-        if(houseParts.length) parts.push(houseParts.join(' '));
+        if(houseParts.length) parts.push(normalizeHouseValue(houseParts.join(' ')));
         address = parts.filter(Boolean).join(', ');
       }
       let qty = 0;
