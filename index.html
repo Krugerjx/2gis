@@ -1549,8 +1549,12 @@
 
     const parts = extractCityStreetHouse(addrText);
     const cityNorm = normalizeCityValue(parts.city);
-    const candidates = cityNorm
-      ? state.db.items.filter(it => normalizeCityValue(it.city || '') === cityNorm)
+    const cityCandidates = cityNorm
+      ? [cityNorm]
+      : Array.from(state.cityFilter).map(normalizeCityValue).filter(Boolean);
+    const citySet = cityCandidates.length ? new Set(cityCandidates) : null;
+    const candidates = citySet
+      ? state.db.items.filter(it => citySet.has(normalizeCityValue(it.city || '')))
       : state.db.items;
     const hasPolygon = it => Array.isArray(it.polygon) && it.polygon.length >= 3;
     let fallbackId = null;
