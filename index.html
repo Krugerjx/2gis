@@ -1552,11 +1552,15 @@
     const candidates = cityNorm
       ? state.db.items.filter(it => normalizeCityValue(it.city || '') === cityNorm)
       : state.db.items;
+    const hasPolygon = it => Array.isArray(it.polygon) && it.polygon.length >= 3;
+    let fallbackId = null;
 
     // 0) быстрые точные проверки
     for(const it of candidates){
-      if(simpleNormalize(it.title) === addrNorm) return it.id;
-      if(simpleNormalize(`${it.city||''} ${it.title||''}`) === addrNorm) return it.id;
+      if(simpleNormalize(it.title) === addrNorm || simpleNormalize(`${it.city||''} ${it.title||''}`) === addrNorm){
+        if(hasPolygon(it)) return it.id;
+        fallbackId = fallbackId || it.id;
+      }
     }
 
     // 1) улица/дом
@@ -1570,26 +1574,40 @@
         const baseStreet = simpleNormalize(baseAddr.street || '');
         const baseHouse = normalizeHouseValue(baseAddr.house || '');
         if(baseStreet === streetNorm){
-          if(baseHouse === houseNorm) return it.id;
-          if(baseHouse && houseNorm && (baseHouse.startsWith(houseNorm) || houseNorm.startsWith(baseHouse))) return it.id;
+          if(baseHouse === houseNorm || (baseHouse && houseNorm && (baseHouse.startsWith(houseNorm) || houseNorm.startsWith(baseHouse)))){
+            if(hasPolygon(it)) return it.id;
+            fallbackId = fallbackId || it.id;
+          }
         }
-        if(baseNorm.includes(streetNorm) && matchesHouseBoundary(baseNorm, houseNorm)) return it.id;
+        if(baseNorm.includes(streetNorm) && matchesHouseBoundary(baseNorm, houseNorm)){
+          if(hasPolygon(it)) return it.id;
+          fallbackId = fallbackId || it.id;
+        }
       }
     }
 
     // 2) includes (обе стороны)
     for(const it of candidates){
       const baseNorm = simpleNormalize(`${it.city||''} ${it.title||''}`);
-      if(baseNorm.includes(addrNorm) || addrNorm.includes(baseNorm)) return it.id;
+      if(baseNorm.includes(addrNorm) || addrNorm.includes(baseNorm)){
+        if(hasPolygon(it)) return it.id;
+        fallbackId = fallbackId || it.id;
+      }
     }
 
     // 3) только улица
     if(street){
       const streetNorm = simpleNormalize(street);
       for(const it of candidates){
-        if(simpleNormalize(`${it.city||''} ${it.title||''}`).includes(streetNorm)) return it.id;
+        if(simpleNormalize(`${it.city||''} ${it.title||''}`).includes(streetNorm)){
+          if(hasPolygon(it)) return it.id;
+          fallbackId = fallbackId || it.id;
+        }
         const baseAddr = extractOrderAddress(it);
-        if(simpleNormalize(baseAddr.street || '') === streetNorm) return it.id;
+        if(simpleNormalize(baseAddr.street || '') === streetNorm){
+          if(hasPolygon(it)) return it.id;
+          fallbackId = fallbackId || it.id;
+        }
       }
     }
 
@@ -1600,10 +1618,13 @@
       for(const it of candidates){
         const b = simpleNormalize(`${it.city||''} ${it.title||''}`);
         const bDigits = b.replace(/[^\d]/g,'');
-        if(bDigits.includes(houseDigits) && b.replace(/\s+/g,'').includes(streetFlat)) return it.id;
+        if(bDigits.includes(houseDigits) && b.replace(/\s+/g,'').includes(streetFlat)){
+          if(hasPolygon(it)) return it.id;
+          fallbackId = fallbackId || it.id;
+        }
       }
     }
-    return null;
+    return fallbackId;
   }
 
   const HEADER_ALIASES = {
