@@ -1543,12 +1543,12 @@
     const re = new RegExp(`(^|\\s|,)${escaped}(?=$|\\s|,)`, 'i');
     return re.test(baseText);
   }
-  function matchAddressToBase(addrText){
+  function matchAddressToBase(addrText, cityHint=''){
     const addrNorm = simpleNormalize(addrText||'');
     if(!addrNorm) return null;
 
     const parts = extractCityStreetHouse(addrText);
-    const cityNorm = normalizeCityValue(parts.city);
+    const cityNorm = normalizeCityValue(cityHint || parts.city);
     const cityCandidates = cityNorm
       ? [cityNorm]
       : Array.from(state.cityFilter).map(normalizeCityValue).filter(Boolean);
@@ -1846,9 +1846,10 @@
 
     const mapped = rows.map(row=>{
       let address = pickText(row, addressKey);
+      const rowCity = pickText(row, cityKey);
       if(!address){
         const parts=[];
-        const city = pickText(row, cityKey);
+        const city = rowCity;
         if(city) parts.push(city);
         const street = pickText(row, streetKey);
         if(street) parts.push(street);
@@ -1861,7 +1862,7 @@
         qty = pickNumber(row, qtyKeys[0]);
       }
       if(Number.isNaN(qty) || qty<0) qty = 0;
-      return { address: address.trim(), qty };
+      return { address: address.trim(), city: (rowCity || '').trim(), qty };
     }).filter(x=>x.address);
 
     if(!mapped.length){
@@ -1873,7 +1874,7 @@
     }
 
     uploadRows = mapped.map(r=>{
-      const foundId = matchAddressToBase(r.address);
+      const foundId = matchAddressToBase(r.address, r.city);
       let hasPolygon = false;
       if(foundId){
         const base = state.db.items.find(item=>item.id===foundId);
