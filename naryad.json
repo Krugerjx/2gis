@@ -1,14 +1,5 @@
 {
   "version": 1,
-  "updated_at": "2026-02-01T21:12:20.737Z",
-  "orders": [
-    {
-      "id": "ed70bec1-699f-4a7e-b89f-540ba783f2c9",
-      "code": "NRD-20260202-5516",
-      "company": "Новый заказчик",
-      "color": "#0EA5E9",
-      "items": [],
-      "created_at": "2026-02-01T21:12:20.734Z"
-    }
-  ]
+  "updated_at": "2026-02-01T21:13:26.536Z",
+  "orders": []
 }
