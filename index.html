@@ -1743,6 +1743,10 @@
     }
     return null;
   }
+  function findCityHeader(headers){
+    const cityNames = new Set(uniqueCities().map(city=> normalizeCityValue(city)));
+    return headers.find(h=> h.norm && cityNames.has(normalizeCityValue(h.norm)))?.original || null;
+  }
 
   function findAllHeaders(headers, aliases){
     const used = new Set();
@@ -1837,7 +1841,7 @@
     const headers = collectHeaders(headerInfo.headerRow);
     const rows = rowsToObjects(headerInfo.headerRow, headerInfo.dataRows);
     const addressKey = findHeader(headers, HEADER_ALIASES.address);
-    const cityKey = findHeader(headers, HEADER_ALIASES.city);
+    const cityKey = findHeader(headers, HEADER_ALIASES.city) || findCityHeader(headers);
     const streetKey = findHeader(headers, HEADER_ALIASES.street);
     const houseKeys = findAllHeaders(headers, HEADER_ALIASES.house);
     const qtyKey = findHeader(headers, HEADER_ALIASES.qty);
@@ -1876,11 +1880,13 @@
     uploadRows = mapped.map(r=>{
       const foundId = matchAddressToBase(r.address, r.city);
       let hasPolygon = false;
+      let matchedCity = '';
       if(foundId){
         const base = state.db.items.find(item=>item.id===foundId);
         hasPolygon = !!(base && Array.isArray(base.polygon) && base.polygon.length>=3);
+        matchedCity = (base?.city || '').trim();
       }
-      return { address:r.address, qty:r.qty, foundId, hasPolygon };
+      return { address:r.address, city:r.city, qty:r.qty, foundId, hasPolygon, matchedCity };
     });
 
     const hits = uploadRows.filter(x=>x.foundId);
@@ -1896,7 +1902,7 @@
     matchTableWrap.style.display='';
     matchTable.innerHTML = '';
     const thead = document.createElement('thead');
-    thead.innerHTML = '<tr><th>#</th><th>Адрес</th><th>Кол</th><th>Статус</th></tr>';
+    thead.innerHTML = '<tr><th>#</th><th>Адрес</th><th>Город (из файла)</th><th>Город (из базы)</th><th>Кол</th><th>Статус</th></tr>';
     matchTable.appendChild(thead);
     const tbody = document.createElement('tbody');
     uploadRows.forEach((r,i)=>{
@@ -1911,7 +1917,7 @@
       } else {
         status = 'Не найден';
       }
-      tr.innerHTML = `<td>${i+1}</td><td>${esc(r.address)}</td><td>${r.qty}</td><td>${status}</td>`;
+      tr.innerHTML = `<td>${i+1}</td><td>${esc(r.address)}</td><td>${esc(r.city || '—')}</td><td>${esc(r.matchedCity || '—')}</td><td>${r.qty}</td><td>${status}</td>`;
       tbody.appendChild(tr);
     });
     matchTable.appendChild(tbody);
