@@ -1,0 +1,28 @@
+{
+  "name": "ghost-run",
+  "version": "0.1.0",
+  "description": "GHOST RUN - a one-thumb 2D runner with async ghost racing and built-in shareable clips.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --port 4173",
+    "cap:sync": "npm run build && cap sync",
+    "cap:android": "npm run build && cap sync android && cap open android",
+    "cap:ios": "npm run build && cap sync ios && cap open ios"
+  },
+  "dependencies": {
+    "phaser": "^3.80.1"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^6.1.2",
+    "@capacitor/core": "^6.1.2",
+    "@capacitor/android": "^6.1.2",
+    "@capacitor/ios": "^6.1.2",
+    "@capacitor/preferences": "^6.0.2",
+    "@capacitor/share": "^6.0.2",
+    "@capacitor/filesystem": "^6.0.1",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.2"
+  }
+}
