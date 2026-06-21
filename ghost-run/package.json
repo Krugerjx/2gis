@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --port 4173",
+    "build:single": "tsc --noEmit && vite build --config vite.single.config.ts && node scripts/inline-art.mjs",
     "cap:sync": "npm run build && cap sync",
     "cap:android": "npm run build && cap sync android && cap open android",
     "cap:ios": "npm run build && cap sync ios && cap open ios"
@@ -15,14 +16,15 @@
     "phaser": "^3.80.1"
   },
   "devDependencies": {
+    "@capacitor/android": "^6.1.2",
     "@capacitor/cli": "^6.1.2",
     "@capacitor/core": "^6.1.2",
-    "@capacitor/android": "^6.1.2",
+    "@capacitor/filesystem": "^6.0.1",
     "@capacitor/ios": "^6.1.2",
     "@capacitor/preferences": "^6.0.2",
     "@capacitor/share": "^6.0.2",
-    "@capacitor/filesystem": "^6.0.1",
     "typescript": "^5.5.4",
-    "vite": "^5.4.2"
+    "vite": "^5.4.2",
+    "vite-plugin-singlefile": "^2.3.3"
   }
 }

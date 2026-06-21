@@ -11,10 +11,13 @@ export class BootScene extends Phaser.Scene {
   }
 
   preload(): void {
-    // Optional generated art. Missing files are tolerated (we fall back to the
-    // procedural textures created below), so ignore load errors here.
-    this.load.image("blip_art", "assets/blip.png");
-    this.load.image("bg_art", "assets/bg.png");
+    // Optional generated art. In a single-file build the art is embedded on
+    // `window.GR_EMBEDDED_ART` as data URIs; otherwise we load it from
+    // `public/assets`. Missing art is tolerated — procedural textures (created
+    // in `create`) are used as a fallback.
+    const embedded = (window as unknown as { GR_EMBEDDED_ART?: Record<string, string> }).GR_EMBEDDED_ART;
+    this.load.image("blip_art", embedded?.blip ?? "assets/blip.png");
+    this.load.image("bg_art", embedded?.bg ?? "assets/bg.png");
     this.load.on("loaderror", () => {
       /* optional art not present — procedural fallback is used */
     });
