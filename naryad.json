@@ -1,5 +1,39 @@
 {
   "version": 1,
-  "updated_at": "2026-06-29T10:14:23.891Z",
-  "orders": []
+  "updated_at": "2026-06-29T10:38:12.330Z",
+  "orders": [
+    {
+      "id": "b122f6cb-694a-413f-a1da-86d8d6e7bb8f",
+      "code": "NRD-20260629-7155",
+      "company": "Без названия",
+      "color": "#E11D48",
+      "items": [
+        {
+          "id": "9eacd3d3-e528-4435-ae3e-983da3f411a2",
+          "qty": 4
+        },
+        {
+          "id": "715fac98-b6ac-462d-af11-1dabf22e049e",
+          "qty": 1
+        },
+        {
+          "id": "f2fd0d2f-470e-48f9-aeee-3577c582c306",
+          "qty": 3
+        },
+        {
+          "id": "d2d85dcc-db27-42f9-a35d-b813d978fd61",
+          "qty": 3
+        },
+        {
+          "id": "7d78ce35-5f3f-4aac-b36a-1b1338de2e03",
+          "qty": 3
+        },
+        {
+          "id": "d772a19d-1f4c-488e-8b72-ab14a1eb172f",
+          "qty": 2
+        }
+      ],
+      "created_at": "2026-06-29T10:14:51.053Z"
+    }
+  ]
 }
