@@ -1,5 +1,659 @@
 {
   "version": 1,
-  "updated_at": "2026-09-29T10:39:59.269Z",
-  "orders": []
+  "updated_at": "2026-09-29T10:41:15.617Z",
+  "orders": [
+    {
+      "id": "67d761d7-4c96-43c5-8a39-7b6a993d3c48",
+      "code": "NRD-20260929-9888",
+      "company": "Без названия",
+      "color": "#1D3EE2",
+      "items": [
+        {
+          "id": "e94337fa-a2c2-459e-b5eb-d7bee6925c14",
+          "qty": 2
+        },
+        {
+          "id": "e94337fa-a2c2-459e-b5eb-d7bee6925c14",
+          "qty": 2
+        },
+        {
+          "id": "e94337fa-a2c2-459e-b5eb-d7bee6925c14",
+          "qty": 4
+        },
+        {
+          "id": "e94337fa-a2c2-459e-b5eb-d7bee6925c14",
+          "qty": 4
+        },
+        {
+          "id": "34db8cce-ff3e-46fb-b6d8-4604f4b14c7b",
+          "qty": 2
+        },
+        {
+          "id": "ddd3d0f6-c20c-4374-a1db-a30e63632380",
+          "qty": 4
+        },
+        {
+          "id": "ddd3d0f6-c20c-4374-a1db-a30e63632380",
+          "qty": 4
+        },
+        {
+          "id": "5a210e5c-d9c6-432a-b952-8e2edd76043d",
+          "qty": 4
+        },
+        {
+          "id": "7d78bfbe-ea8e-44b4-b07a-99c0c19510f3",
+          "qty": 4
+        },
+        {
+          "id": "8c242ebf-19aa-4560-9a64-cf5e21ecbb87",
+          "qty": 4
+        },
+        {
+          "id": "8c242ebf-19aa-4560-9a64-cf5e21ecbb87",
+          "qty": 4
+        },
+        {
+          "id": "8c242ebf-19aa-4560-9a64-cf5e21ecbb87",
+          "qty": 2
+        },
+        {
+          "id": "8c242ebf-19aa-4560-9a64-cf5e21ecbb87",
+          "qty": 2
+        },
+        {
+          "id": "8c242ebf-19aa-4560-9a64-cf5e21ecbb87",
+          "qty": 4
+        },
+        {
+          "id": "8c242ebf-19aa-4560-9a64-cf5e21ecbb87",
+          "qty": 3
+        },
+        {
+          "id": "8c242ebf-19aa-4560-9a64-cf5e21ecbb87",
+          "qty": 2
+        },
+        {
+          "id": "8c242ebf-19aa-4560-9a64-cf5e21ecbb87",
+          "qty": 3
+        },
+        {
+          "id": "8c242ebf-19aa-4560-9a64-cf5e21ecbb87",
+          "qty": 2
+        },
+        {
+          "id": "8c242ebf-19aa-4560-9a64-cf5e21ecbb87",
+          "qty": 2
+        },
+        {
+          "id": "8c242ebf-19aa-4560-9a64-cf5e21ecbb87",
+          "qty": 2
+        },
+        {
+          "id": "8c242ebf-19aa-4560-9a64-cf5e21ecbb87",
+          "qty": 3
+        },
+        {
+          "id": "8c242ebf-19aa-4560-9a64-cf5e21ecbb87",
+          "qty": 4
+        },
+        {
+          "id": "8c242ebf-19aa-4560-9a64-cf5e21ecbb87",
+          "qty": 4
+        },
+        {
+          "id": "8c242ebf-19aa-4560-9a64-cf5e21ecbb87",
+          "qty": 4
+        },
+        {
+          "id": "8c242ebf-19aa-4560-9a64-cf5e21ecbb87",
+          "qty": 4
+        },
+        {
+          "id": "8c242ebf-19aa-4560-9a64-cf5e21ecbb87",
+          "qty": 2
+        },
+        {
+          "id": "8c242ebf-19aa-4560-9a64-cf5e21ecbb87",
+          "qty": 4
+        },
+        {
+          "id": "8c242ebf-19aa-4560-9a64-cf5e21ecbb87",
+          "qty": 4
+        },
+        {
+          "id": "b2a9f4a0-4e1b-477d-bf9c-ce312c19b779",
+          "qty": 3
+        },
+        {
+          "id": "b2a9f4a0-4e1b-477d-bf9c-ce312c19b779",
+          "qty": 4
+        },
+        {
+          "id": "b2a9f4a0-4e1b-477d-bf9c-ce312c19b779",
+          "qty": 4
+        },
+        {
+          "id": "b2a9f4a0-4e1b-477d-bf9c-ce312c19b779",
+          "qty": 6
+        },
+        {
+          "id": "b2a9f4a0-4e1b-477d-bf9c-ce312c19b779",
+          "qty": 2
+        },
+        {
+          "id": "b2a9f4a0-4e1b-477d-bf9c-ce312c19b779",
+          "qty": 4
+        },
+        {
+          "id": "b2a9f4a0-4e1b-477d-bf9c-ce312c19b779",
+          "qty": 4
+        },
+        {
+          "id": "929a84c9-056f-4059-9a91-59cb9cdcdd3f",
+          "qty": 4
+        },
+        {
+          "id": "929a84c9-056f-4059-9a91-59cb9cdcdd3f",
+          "qty": 5
+        },
+        {
+          "id": "929a84c9-056f-4059-9a91-59cb9cdcdd3f",
+          "qty": 6
+        },
+        {
+          "id": "929a84c9-056f-4059-9a91-59cb9cdcdd3f",
+          "qty": 3
+        },
+        {
+          "id": "929a84c9-056f-4059-9a91-59cb9cdcdd3f",
+          "qty": 5
+        },
+        {
+          "id": "929a84c9-056f-4059-9a91-59cb9cdcdd3f",
+          "qty": 2
+        },
+        {
+          "id": "929a84c9-056f-4059-9a91-59cb9cdcdd3f",
+          "qty": 4
+        },
+        {
+          "id": "929a84c9-056f-4059-9a91-59cb9cdcdd3f",
+          "qty": 4
+        },
+        {
+          "id": "929a84c9-056f-4059-9a91-59cb9cdcdd3f",
+          "qty": 4
+        },
+        {
+          "id": "929a84c9-056f-4059-9a91-59cb9cdcdd3f",
+          "qty": 2
+        },
+        {
+          "id": "929a84c9-056f-4059-9a91-59cb9cdcdd3f",
+          "qty": 4
+        },
+        {
+          "id": "929a84c9-056f-4059-9a91-59cb9cdcdd3f",
+          "qty": 2
+        },
+        {
+          "id": "929a84c9-056f-4059-9a91-59cb9cdcdd3f",
+          "qty": 2
+        },
+        {
+          "id": "b5f062ee-4ed8-46cd-981f-f572e0cc0890",
+          "qty": 6
+        },
+        {
+          "id": "e94337fa-a2c2-459e-b5eb-d7bee6925c14",
+          "qty": 1
+        },
+        {
+          "id": "e94337fa-a2c2-459e-b5eb-d7bee6925c14",
+          "qty": 6
+        },
+        {
+          "id": "e94337fa-a2c2-459e-b5eb-d7bee6925c14",
+          "qty": 4
+        },
+        {
+          "id": "e94337fa-a2c2-459e-b5eb-d7bee6925c14",
+          "qty": 4
+        },
+        {
+          "id": "e94337fa-a2c2-459e-b5eb-d7bee6925c14",
+          "qty": 6
+        },
+        {
+          "id": "e7b7fceb-154c-486b-b1b0-27263b393143",
+          "qty": 3
+        },
+        {
+          "id": "7f0f0ce9-4a0d-471e-b15d-694d28339f86",
+          "qty": 2
+        },
+        {
+          "id": "54a7b912-a7fa-48eb-b5f4-66121a35e478",
+          "qty": 1
+        },
+        {
+          "id": "54a7b912-a7fa-48eb-b5f4-66121a35e478",
+          "qty": 4
+        },
+        {
+          "id": "54a7b912-a7fa-48eb-b5f4-66121a35e478",
+          "qty": 2
+        },
+        {
+          "id": "54a7b912-a7fa-48eb-b5f4-66121a35e478",
+          "qty": 4
+        },
+        {
+          "id": "54a7b912-a7fa-48eb-b5f4-66121a35e478",
+          "qty": 5
+        },
+        {
+          "id": "54a7b912-a7fa-48eb-b5f4-66121a35e478",
+          "qty": 4
+        },
+        {
+          "id": "54a7b912-a7fa-48eb-b5f4-66121a35e478",
+          "qty": 6
+        },
+        {
+          "id": "54a7b912-a7fa-48eb-b5f4-66121a35e478",
+          "qty": 2
+        },
+        {
+          "id": "54a7b912-a7fa-48eb-b5f4-66121a35e478",
+          "qty": 2
+        },
+        {
+          "id": "54a7b912-a7fa-48eb-b5f4-66121a35e478",
+          "qty": 2
+        },
+        {
+          "id": "54a7b912-a7fa-48eb-b5f4-66121a35e478",
+          "qty": 2
+        },
+        {
+          "id": "54a7b912-a7fa-48eb-b5f4-66121a35e478",
+          "qty": 4
+        },
+        {
+          "id": "54a7b912-a7fa-48eb-b5f4-66121a35e478",
+          "qty": 2
+        },
+        {
+          "id": "54a7b912-a7fa-48eb-b5f4-66121a35e478",
+          "qty": 6
+        },
+        {
+          "id": "54a7b912-a7fa-48eb-b5f4-66121a35e478",
+          "qty": 4
+        },
+        {
+          "id": "42bbaad4-f3d7-47e7-852d-c9faecf4460a",
+          "qty": 3
+        },
+        {
+          "id": "42bbaad4-f3d7-47e7-852d-c9faecf4460a",
+          "qty": 6
+        },
+        {
+          "id": "42bbaad4-f3d7-47e7-852d-c9faecf4460a",
+          "qty": 2
+        },
+        {
+          "id": "42bbaad4-f3d7-47e7-852d-c9faecf4460a",
+          "qty": 6
+        },
+        {
+          "id": "42bbaad4-f3d7-47e7-852d-c9faecf4460a",
+          "qty": 3
+        },
+        {
+          "id": "42bbaad4-f3d7-47e7-852d-c9faecf4460a",
+          "qty": 6
+        },
+        {
+          "id": "ce9c5e31-00ad-4f6e-8c16-b289e2e8c32b",
+          "qty": 4
+        },
+        {
+          "id": "ce9c5e31-00ad-4f6e-8c16-b289e2e8c32b",
+          "qty": 4
+        },
+        {
+          "id": "ce9c5e31-00ad-4f6e-8c16-b289e2e8c32b",
+          "qty": 4
+        },
+        {
+          "id": "ce9c5e31-00ad-4f6e-8c16-b289e2e8c32b",
+          "qty": 4
+        },
+        {
+          "id": "ce9c5e31-00ad-4f6e-8c16-b289e2e8c32b",
+          "qty": 4
+        },
+        {
+          "id": "ce9c5e31-00ad-4f6e-8c16-b289e2e8c32b",
+          "qty": 4
+        },
+        {
+          "id": "ce9c5e31-00ad-4f6e-8c16-b289e2e8c32b",
+          "qty": 4
+        },
+        {
+          "id": "ce9c5e31-00ad-4f6e-8c16-b289e2e8c32b",
+          "qty": 4
+        },
+        {
+          "id": "ce9c5e31-00ad-4f6e-8c16-b289e2e8c32b",
+          "qty": 4
+        },
+        {
+          "id": "ce9c5e31-00ad-4f6e-8c16-b289e2e8c32b",
+          "qty": 4
+        },
+        {
+          "id": "633b4f78-5d31-4c9f-9dfe-9664e0ffd703",
+          "qty": 6
+        },
+        {
+          "id": "633b4f78-5d31-4c9f-9dfe-9664e0ffd703",
+          "qty": 6
+        },
+        {
+          "id": "633b4f78-5d31-4c9f-9dfe-9664e0ffd703",
+          "qty": 2
+        },
+        {
+          "id": "633b4f78-5d31-4c9f-9dfe-9664e0ffd703",
+          "qty": 2
+        },
+        {
+          "id": "633b4f78-5d31-4c9f-9dfe-9664e0ffd703",
+          "qty": 2
+        },
+        {
+          "id": "633b4f78-5d31-4c9f-9dfe-9664e0ffd703",
+          "qty": 2
+        },
+        {
+          "id": "633b4f78-5d31-4c9f-9dfe-9664e0ffd703",
+          "qty": 3
+        },
+        {
+          "id": "eb47a03d-9ad7-4a93-be2b-1eaa1b6586a4",
+          "qty": 2
+        },
+        {
+          "id": "eb47a03d-9ad7-4a93-be2b-1eaa1b6586a4",
+          "qty": 4
+        },
+        {
+          "id": "eb47a03d-9ad7-4a93-be2b-1eaa1b6586a4",
+          "qty": 6
+        },
+        {
+          "id": "eb47a03d-9ad7-4a93-be2b-1eaa1b6586a4",
+          "qty": 4
+        },
+        {
+          "id": "eb47a03d-9ad7-4a93-be2b-1eaa1b6586a4",
+          "qty": 4
+        },
+        {
+          "id": "eb47a03d-9ad7-4a93-be2b-1eaa1b6586a4",
+          "qty": 4
+        },
+        {
+          "id": "1892891d-0684-4764-a010-6d2a25bee467",
+          "qty": 2
+        },
+        {
+          "id": "1892891d-0684-4764-a010-6d2a25bee467",
+          "qty": 2
+        },
+        {
+          "id": "f0c43938-e9c9-4f04-8c54-ab633a24368a",
+          "qty": 4
+        },
+        {
+          "id": "f0c43938-e9c9-4f04-8c54-ab633a24368a",
+          "qty": 4
+        },
+        {
+          "id": "f0c43938-e9c9-4f04-8c54-ab633a24368a",
+          "qty": 4
+        },
+        {
+          "id": "f0c43938-e9c9-4f04-8c54-ab633a24368a",
+          "qty": 4
+        },
+        {
+          "id": "f0c43938-e9c9-4f04-8c54-ab633a24368a",
+          "qty": 3
+        },
+        {
+          "id": "f0c43938-e9c9-4f04-8c54-ab633a24368a",
+          "qty": 4
+        },
+        {
+          "id": "f0c43938-e9c9-4f04-8c54-ab633a24368a",
+          "qty": 4
+        },
+        {
+          "id": "f0c43938-e9c9-4f04-8c54-ab633a24368a",
+          "qty": 4
+        },
+        {
+          "id": "dc6af232-cad9-4271-8920-199e0ad33968",
+          "qty": 6
+        },
+        {
+          "id": "dc6af232-cad9-4271-8920-199e0ad33968",
+          "qty": 6
+        },
+        {
+          "id": "dc6af232-cad9-4271-8920-199e0ad33968",
+          "qty": 6
+        },
+        {
+          "id": "dc6af232-cad9-4271-8920-199e0ad33968",
+          "qty": 6
+        },
+        {
+          "id": "dc6af232-cad9-4271-8920-199e0ad33968",
+          "qty": 4
+        },
+        {
+          "id": "dc6af232-cad9-4271-8920-199e0ad33968",
+          "qty": 6
+        },
+        {
+          "id": "c64346e0-fca1-41d6-844c-6d5c7b9b0bec",
+          "qty": 2
+        },
+        {
+          "id": "c64346e0-fca1-41d6-844c-6d5c7b9b0bec",
+          "qty": 8
+        },
+        {
+          "id": "c64346e0-fca1-41d6-844c-6d5c7b9b0bec",
+          "qty": 8
+        },
+        {
+          "id": "41e902ad-a22a-45d0-b3fe-f2c66deb3863",
+          "qty": 4
+        },
+        {
+          "id": "1c9a702e-a607-4aba-a945-48d064656dbc",
+          "qty": 3
+        },
+        {
+          "id": "34db8cce-ff3e-46fb-b6d8-4604f4b14c7b",
+          "qty": 6
+        },
+        {
+          "id": "34db8cce-ff3e-46fb-b6d8-4604f4b14c7b",
+          "qty": 4
+        },
+        {
+          "id": "894f72d4-a3df-4f22-ac5c-91a9c66d5541",
+          "qty": 3
+        },
+        {
+          "id": "894f72d4-a3df-4f22-ac5c-91a9c66d5541",
+          "qty": 4
+        },
+        {
+          "id": "894f72d4-a3df-4f22-ac5c-91a9c66d5541",
+          "qty": 1
+        },
+        {
+          "id": "894f72d4-a3df-4f22-ac5c-91a9c66d5541",
+          "qty": 2
+        },
+        {
+          "id": "894f72d4-a3df-4f22-ac5c-91a9c66d5541",
+          "qty": 4
+        },
+        {
+          "id": "894f72d4-a3df-4f22-ac5c-91a9c66d5541",
+          "qty": 6
+        },
+        {
+          "id": "894f72d4-a3df-4f22-ac5c-91a9c66d5541",
+          "qty": 4
+        },
+        {
+          "id": "894f72d4-a3df-4f22-ac5c-91a9c66d5541",
+          "qty": 6
+        },
+        {
+          "id": "894f72d4-a3df-4f22-ac5c-91a9c66d5541",
+          "qty": 7
+        },
+        {
+          "id": "894f72d4-a3df-4f22-ac5c-91a9c66d5541",
+          "qty": 3
+        },
+        {
+          "id": "894f72d4-a3df-4f22-ac5c-91a9c66d5541",
+          "qty": 2
+        },
+        {
+          "id": "894f72d4-a3df-4f22-ac5c-91a9c66d5541",
+          "qty": 5
+        },
+        {
+          "id": "894f72d4-a3df-4f22-ac5c-91a9c66d5541",
+          "qty": 3
+        },
+        {
+          "id": "894f72d4-a3df-4f22-ac5c-91a9c66d5541",
+          "qty": 3
+        },
+        {
+          "id": "894f72d4-a3df-4f22-ac5c-91a9c66d5541",
+          "qty": 8
+        },
+        {
+          "id": "894f72d4-a3df-4f22-ac5c-91a9c66d5541",
+          "qty": 4
+        },
+        {
+          "id": "894f72d4-a3df-4f22-ac5c-91a9c66d5541",
+          "qty": 3
+        },
+        {
+          "id": "894f72d4-a3df-4f22-ac5c-91a9c66d5541",
+          "qty": 4
+        },
+        {
+          "id": "894f72d4-a3df-4f22-ac5c-91a9c66d5541",
+          "qty": 5
+        },
+        {
+          "id": "894f72d4-a3df-4f22-ac5c-91a9c66d5541",
+          "qty": 1
+        },
+        {
+          "id": "894f72d4-a3df-4f22-ac5c-91a9c66d5541",
+          "qty": 8
+        },
+        {
+          "id": "894f72d4-a3df-4f22-ac5c-91a9c66d5541",
+          "qty": 8
+        },
+        {
+          "id": "894f72d4-a3df-4f22-ac5c-91a9c66d5541",
+          "qty": 8
+        },
+        {
+          "id": "894f72d4-a3df-4f22-ac5c-91a9c66d5541",
+          "qty": 4
+        },
+        {
+          "id": "894f72d4-a3df-4f22-ac5c-91a9c66d5541",
+          "qty": 4
+        },
+        {
+          "id": "894f72d4-a3df-4f22-ac5c-91a9c66d5541",
+          "qty": 1
+        },
+        {
+          "id": "894f72d4-a3df-4f22-ac5c-91a9c66d5541",
+          "qty": 3
+        },
+        {
+          "id": "894f72d4-a3df-4f22-ac5c-91a9c66d5541",
+          "qty": 3
+        },
+        {
+          "id": "894f72d4-a3df-4f22-ac5c-91a9c66d5541",
+          "qty": 7
+        },
+        {
+          "id": "894f72d4-a3df-4f22-ac5c-91a9c66d5541",
+          "qty": 7
+        },
+        {
+          "id": "894f72d4-a3df-4f22-ac5c-91a9c66d5541",
+          "qty": 1
+        },
+        {
+          "id": "a574c3cc-4cdc-4537-a11b-fcafc0b50941",
+          "qty": 8
+        },
+        {
+          "id": "a574c3cc-4cdc-4537-a11b-fcafc0b50941",
+          "qty": 6
+        },
+        {
+          "id": "a574c3cc-4cdc-4537-a11b-fcafc0b50941",
+          "qty": 3
+        },
+        {
+          "id": "a574c3cc-4cdc-4537-a11b-fcafc0b50941",
+          "qty": 8
+        },
+        {
+          "id": "a574c3cc-4cdc-4537-a11b-fcafc0b50941",
+          "qty": 4
+        },
+        {
+          "id": "a574c3cc-4cdc-4537-a11b-fcafc0b50941",
+          "qty": 6
+        },
+        {
+          "id": "a574c3cc-4cdc-4537-a11b-fcafc0b50941",
+          "qty": 2
+        }
+      ],
+      "created_at": "2026-09-29T10:41:15.554Z"
+    }
+  ]
 }
