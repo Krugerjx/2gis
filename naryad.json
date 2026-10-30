@@ -1,163 +1,83 @@
 {
   "version": 1,
-  "updated_at": "2026-10-30T06:55:43.575Z",
+  "updated_at": "2026-10-30T07:19:01.075Z",
   "orders": [
     {
-      "id": "4128a30c-038b-4dd3-b815-32b4ea2576ad",
-      "code": "NRD-20261029-8183",
-      "company": "бил",
-      "color": "#0D26E3",
+      "id": "fd293e59-0bd5-4d1d-a728-9e7d44c0344b",
+      "code": "NRD-20261030-4795",
+      "company": "дом ру",
+      "color": "#CE8F09",
       "items": [
         {
-          "id": "d105692f-f96a-4329-b390-55e2657dc918",
-          "qty": 3
-        },
-        {
-          "id": "0b9a8e71-602e-4087-a77e-d5311aa8c3a4",
-          "qty": 4
-        },
-        {
-          "id": "6fa1385d-82ac-4c78-b10a-254cc4d3d2db",
-          "qty": 8
-        },
-        {
-          "id": "c0331513-b0de-4d32-a495-5f42fbe8cb8e",
+          "id": "7ed15eae-6057-4568-81b4-cac688ae5f59",
           "qty": 2
         },
         {
-          "id": "95c99356-5e1d-4d7e-b2a4-0fa6b1ae77bf",
-          "qty": 2
-        },
-        {
-          "id": "8a2b5992-f5a1-43c5-ac09-6ed3c9beeba4",
-          "qty": 5
-        },
-        {
-          "id": "e10e0341-a45c-4764-88db-cef1dfce213e",
-          "qty": 2
-        },
-        {
-          "id": "cd084720-b0bf-47c4-9f1b-83926fe79551",
-          "qty": 7
-        },
-        {
-          "id": "45cac760-5ed5-46b4-bd86-85fdb847938f",
-          "qty": 2
-        },
-        {
-          "id": "9c6c675f-afbe-4115-8db0-4a65cee5ae27",
-          "qty": 4
-        },
-        {
-          "id": "9ebf2b3c-6a2e-4070-a32e-71032c731101",
-          "qty": 4
-        },
-        {
-          "id": "24b1d19c-2bac-46d5-b5ea-8a9aa551156f",
-          "qty": 5
-        },
-        {
-          "id": "d51b9360-ce08-4edc-9d65-c8001848b357",
-          "qty": 2
-        },
-        {
-          "id": "ac6a430c-9822-4943-beed-91a2b32d153e",
-          "qty": 4
-        },
-        {
-          "id": "70f05074-3bf7-4786-ae6e-63af441166ea",
+          "id": "f029f7d6-811d-4c30-ab87-0a87824330fa",
           "qty": 1
         },
         {
-          "id": "42b5ad7e-bd85-48b1-8324-985e8b93e617",
-          "qty": 5
+          "id": "5bfca9b7-d7b3-4617-9c34-780a7fc3313a",
+          "qty": 3
         },
         {
-          "id": "234b176a-fa22-4dad-b7af-1d0eef0e17d9",
+          "id": "71beb403-4bad-4de7-b347-8a9344f6b3da",
+          "qty": 4
+        },
+        {
+          "id": "f90be9b4-98b0-456c-a7c7-010c24051339",
+          "qty": 2
+        },
+        {
+          "id": "8e42c85d-48bd-4d74-bf7d-1af713c7c538",
+          "qty": 2
+        },
+        {
+          "id": "6bd24af5-302f-4449-af81-92b2512994e1",
           "qty": 6
         },
         {
-          "id": "8e879272-ad8c-4413-9b8c-ec116b0027f7",
-          "qty": 5
-        },
-        {
-          "id": "e3383092-6eeb-4e30-9e43-466f723edb7b",
-          "qty": 4
-        },
-        {
-          "id": "f99bd6a4-5a6a-41f1-a70e-5dbe64a59c72",
-          "qty": 7
-        },
-        {
-          "id": "d0554d95-a858-4339-856c-af47c778fa0c",
-          "qty": 5
-        },
-        {
-          "id": "ea55f3bc-cd02-4f16-96a1-95a4c7039d6e",
-          "qty": 3
-        },
-        {
-          "id": "69dfb49a-9f0e-49c0-ac95-bbcf44cbb4e2",
-          "qty": 2
-        },
-        {
-          "id": "d3488922-ccde-4660-901f-5a69fb8cf73d",
-          "qty": 5
-        },
-        {
-          "id": "79e5b575-df20-4a1e-9015-f3e0d2297685",
-          "qty": 2
-        },
-        {
-          "id": "22337099-890d-4ce9-97ed-005677d725fc",
-          "qty": 4
-        },
-        {
-          "id": "d0a970ff-3c16-4e32-a51e-48aa3f16a637",
+          "id": "d1ee1736-c39a-4bd6-8425-0a670d30d9c7",
           "qty": 1
         },
         {
-          "id": "c9f5f00c-d6eb-47a0-8313-e0bdb5b00a56",
-          "qty": 2
-        },
-        {
-          "id": "fe9a63b9-331b-4b8e-9006-d2dc023f90e5",
+          "id": "202a9751-53a3-4eed-9113-ea4828e26113",
           "qty": 6
         },
         {
-          "id": "5acacfd0-e1a8-4d95-a393-f0c572b0e28a",
-          "qty": 8
+          "id": "6b2d3a5b-da29-41b0-bc24-bc655e6c6064",
+          "qty": 2
         },
         {
-          "id": "01375d88-7c25-4bb1-9d8f-2782e3b42899",
-          "qty": 4
-        },
-        {
-          "id": "62a2f45b-050f-43d9-acda-7237a3429bf6",
-          "qty": 4
-        },
-        {
-          "id": "7f5f03da-5cef-4f8d-ae90-53a4ae501d9a",
-          "qty": 7
-        },
-        {
-          "id": "34d3476b-e237-4d69-aa4d-4da3f8f54ae8",
-          "qty": 4
-        },
-        {
-          "id": "dae73eb2-378d-46e6-9d55-2e9a1e70d376",
+          "id": "eb6a5d8e-1dcf-4ca8-97ae-5d0f779c04b6",
           "qty": 3
         },
         {
-          "id": "9ad85e76-e7ab-4adb-864c-f6c45af94c9a",
-          "qty": 1
+          "id": "9747b193-bfb6-4b3b-822f-94aa7c2b60d9",
+          "qty": 2
         },
         {
-          "id": "d2692c6c-a876-40f1-8e11-4741ddff27e2",
-          "qty": 1
+          "id": "83765881-f36f-4cf9-8049-a6a9b668c11e",
+          "qty": 4
+        },
+        {
+          "id": "acbc3d83-c185-41cd-b4f7-46379e39426a",
+          "qty": 4
+        },
+        {
+          "id": "f7b4cd73-ba63-45b4-94f8-7481f6bf60c7",
+          "qty": 3
+        },
+        {
+          "id": "4d1cbb67-4dec-489b-aac9-2637c6bf80e2",
+          "qty": 4
+        },
+        {
+          "id": "d2e7ba9b-b646-497a-ae29-e0f4bb9a1345",
+          "qty": 3
         }
       ],
-      "created_at": "2026-10-29T08:43:11.419Z"
+      "created_at": "2026-10-30T07:19:01.066Z"
     }
   ]
 }
